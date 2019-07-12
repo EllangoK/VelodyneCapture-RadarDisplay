@@ -7,7 +7,7 @@ set( CMAKE_CXX_EXTENSIONS OFF )
 
 # Create Project
 project( sample )
-add_executable( viewer VelodyneCapture.h main.cpp )
+add_executable( viewer VelodyneCapture.h RadarCapture.h main.cpp )
 
 # Set StartUp Project
 set_property( DIRECTORY PROPERTY VS_STARTUP_PROJECT "viewer" )
@@ -78,7 +78,7 @@ if( NO_EMPTY_RETURNS )
 endif()
 
 # Find Package OpenCV
-set( OpenCV_DIR "C:/Program Files/opencv/build" )
+set( OpenCV_DIR "/opt/opencv/build" )
 set( OpenCV_STATIC OFF )
 find_package( OpenCV REQUIRED )
 
