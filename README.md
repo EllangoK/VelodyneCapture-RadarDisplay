@@ -34,10 +34,22 @@ License
 Copyright &copy; 2017 Tsukasa SUGIURA  
 Distributed under the [MIT License](http://www.opensource.org/licenses/mit-license.php "MIT License | Open Source Initiative").  
 
-
 Contact
 -------
 * Tsukasa Sugiura
     * <t.sugiura0204@gmail.com>
     * <https://twitter.com/UnaNancyOwen>
     * <http://UnaNancyOwen.com>
+
+RadarCapture
+===============
+
+RadarCapture is a general display capture class to retrieve radar data from the Texas Instrument mmWave AWR1443 automotive radar sensor. It converts the output of side mounted automotive radar that is oriented to capture a vertical slice, into the point cloud and maps it on to existing LIDAR data.
+It relies on contour characteristics to be sent via socket, using length, width, distance and angle.
+It also relies on offset from LIDAR to properly map the radar readings into the point cloud.
+This class has only been tested with the Texas Instrument mmWave AWR1443, but theoretically should be able to display and radar if the orientation is the same and the correct characteristics have been provided.
+
+Environment
+-----------
+Uses BSD sockets to transfer information from radar capture source to the display.
+Uses OpenCV cv::Vec3f for point cloud value storage.
