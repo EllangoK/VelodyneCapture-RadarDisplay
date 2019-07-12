@@ -13,7 +13,7 @@
 
 namespace radar {
 
-class RadarCapture {
+class RadarDisplay {
  public:
   int sockfd, newsockfd, portno;
   char msgBuffer[59];
@@ -21,11 +21,11 @@ class RadarCapture {
   struct sockaddr_in serv_addr, cli_addr;
   int n;
   // Constructor
-  RadarCapture(int port){
+  RadarDisplay(int port){
       portno = port;
   };
   // Destructor
-  ~RadarCapture() { close(); };
+  ~RadarDisplay() { close(); };
   void startServer() {
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
