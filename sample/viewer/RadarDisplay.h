@@ -19,10 +19,13 @@ class RadarDisplay {
   char msgBuffer[59];
   socklen_t clilen;
   struct sockaddr_in serv_addr, cli_addr;
-  int n;
+  float offsetX, offsetY, offsetZ;
   // Constructor
-  RadarDisplay(int port){
+  RadarDisplay(int port, float X, float Y, float Z){
       portno = port;
+      offsetX = X;
+      offsetY = Y;
+      offsetZ = Z;
   };
   // Destructor
   ~RadarDisplay() { close(); };
@@ -47,6 +50,7 @@ class RadarDisplay {
     bzero(msgBuffer, 59);
   }
   std::string radarRead() {
+    int n;
     n = read(newsockfd, msgBuffer, 59);
     if (n < 0) error("Socket Read Error");
     n = write(newsockfd, "I got your message", 18);
@@ -72,11 +76,10 @@ class RadarDisplay {
     std::vector<double> radarDataVec;
     radarDataVec = extractData();
     float radarX, radarUpperY, radarLowerY, radarZ;
-    radarX = static_cast<float>(radarDataVec[1])+16;
-    radarUpperY = static_cast<float>(radarDataVec[0]/2.)-66;
-    radarLowerY = static_cast<float>(-radarDataVec[0]/2.)-66;
-    radarZ = 0.0 - 5; //unknown for now
-    //5cm up, 16 right, 33 forward
+    radarX = static_cast<float>(radarDataVec[1])+offsetX;
+    radarUpperY = static_cast<float>(radarDataVec[0]/2.)+offsetY*2;
+    radarLowerY = static_cast<float>(-radarDataVec[0]/2.)+offsetY*2;
+    radarZ = 0.0 - offsetZ; //unknown for now
     if( radarX != 0.0f && radarUpperY != 0.0f) {
       for(int i = ceil(radarLowerY); i <= floor(radarUpperY); i += 2) {
         buffer.push_back(cv::Vec3f(radarX,i,radarZ));
