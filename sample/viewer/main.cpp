@@ -29,6 +29,7 @@ int main( int argc, char* argv[] )
     //5cm up, 16 right, 33 back
     radar::RadarDisplay radar(portno, 16, -33, -5);
     radar.startServer();
+    radar.threadRadarRead();
 
     if( !capture.isOpen() ){
         std::cerr << "Can't open VelodyneCapture." << std::endl;
@@ -47,14 +48,12 @@ int main( int argc, char* argv[] )
         }
         , &viewer
     );
-
     while( capture.isRun() && !viewer.wasStopped() ){
         // Capture One Rotation Data
         cv::viz::WCloudCollection collection();
         std::vector<velodyne::Laser> lasers;
         std::vector<cv::Vec3f> buffer;
-        std::future<std::vector<cv::Vec3f>> fut = std::async (&radar::RadarDisplay::generatePointVec, &radar); 
-        buffer = fut.get();
+        buffer = radar.generatePointVec();
 
         capture >> lasers;
         if( lasers.empty() ){
@@ -89,6 +88,5 @@ int main( int argc, char* argv[] )
 
     // Close All Viewers
     cv::viz::unregisterAllWindows();
-    radar.close();
     return 0;
 }
