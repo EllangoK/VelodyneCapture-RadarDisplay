@@ -7,7 +7,7 @@
 
 // Include VelodyneCapture Header
 #include "VelodyneCapture.h"
-#include "RadarCapture.h"
+#include "RadarDisplay.h"
 #include <thread>
 #include <future>
 
@@ -27,7 +27,7 @@ int main( int argc, char* argv[] )
     
     int portno = 12345;
     //5cm up, 16 right, 33 back
-    radar::RadarCapture radar(portno, 16, -33, -5);
+    radar::RadarDisplay radar(portno, 16, -33, -5);
     radar.startServer();
 
     if( !capture.isOpen() ){
@@ -53,7 +53,7 @@ int main( int argc, char* argv[] )
         cv::viz::WCloudCollection collection();
         std::vector<velodyne::Laser> lasers;
         std::vector<cv::Vec3f> buffer;
-        std::future<std::vector<cv::Vec3f>> fut = std::async (&radar::RadarCapture::generatePointVec, &radar); 
+        std::future<std::vector<cv::Vec3f>> fut = std::async (&radar::RadarDisplay::generatePointVec, &radar); 
         buffer = fut.get();
 
         capture >> lasers;
