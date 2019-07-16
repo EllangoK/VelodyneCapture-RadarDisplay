@@ -8,8 +8,10 @@
 // Include VelodyneCapture Header
 #include "VelodyneCapture.h"
 #include "RadarDisplay.h"
+
 #include <thread>
 #include <future>
+#include <unistd.h>
 
 int main( int argc, char* argv[] )
 {
@@ -49,6 +51,7 @@ int main( int argc, char* argv[] )
         , &viewer
     );
     while( capture.isRun() && !viewer.wasStopped() ){
+        usleep(40000);
         // Capture One Rotation Data
         cv::viz::WCloudCollection collection();
         std::vector<velodyne::Laser> lasers;
@@ -88,5 +91,6 @@ int main( int argc, char* argv[] )
 
     // Close All Viewers
     cv::viz::unregisterAllWindows();
+    radar.close();
     return 0;
 }
