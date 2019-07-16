@@ -88,24 +88,24 @@ class RadarDisplay {
   std::vector<cv::Vec3f> generatePointVec() {
     std::vector<double> radarDataVec;
     radarDataVec = extractData();
-    float radarX, radarUpperY, radarLowerY, radarZ;
+    float radarX, radarUpperZ, radarLowerZ, radarY;
     radarX = static_cast<float>(radarDataVec[1]) + offsetX;
-    radarUpperY = static_cast<float>(radarDataVec[0] / 2.) + offsetY * 2;
-    radarLowerY = static_cast<float>(-radarDataVec[0] / 2.) + offsetY * 2;
-    radarZ = 0.0 - offsetZ;  // unknown for now
-    if (radarX != 0.0f && radarUpperY != 0.0f) {
+    radarUpperZ = static_cast<float>(radarDataVec[0] / 2.) + offsetZ;
+    radarLowerZ = static_cast<float>(-radarDataVec[0] / 2.) + offsetZ;
+    radarY = 0.0 + offsetY * 2;  // unknown for now
+    if (radarX != 0.0f && radarUpperZ != 0.0f) {
       buffer.clear();
-      for (int i = ceil(radarLowerY); i <= floor(radarUpperY); i += 2) {
-        buffer.push_back(cv::Vec3f(radarX, i, radarZ));
-        buffer.push_back(cv::Vec3f(radarX + 1, i, radarZ));
-        buffer.push_back(cv::Vec3f(radarX + 2, i, radarZ));
-        buffer.push_back(cv::Vec3f(radarX + 3, i, radarZ));
+      for (int i = ceil(radarLowerZ); i <= floor(radarUpperZ); i += 2) {
+        buffer.push_back(cv::Vec3f(radarX, radarY, i));
+        buffer.push_back(cv::Vec3f(radarX, radarY + 1, i));
+        buffer.push_back(cv::Vec3f(radarX, radarY + 2, i));
+        buffer.push_back(cv::Vec3f(radarX, radarY + 3, i));
       }
     } else {
       radarX = std::numeric_limits<float>::quiet_NaN();
-      radarUpperY = std::numeric_limits<float>::quiet_NaN();
-      radarZ = std::numeric_limits<float>::quiet_NaN();
-      buffer.push_back(cv::Vec3f(radarX, radarUpperY, radarZ));
+      radarUpperZ = std::numeric_limits<float>::quiet_NaN();
+      radarY = std::numeric_limits<float>::quiet_NaN();
+      buffer.push_back(cv::Vec3f(radarX, radarY, radarUpperZ));
     }
     return buffer;
   }

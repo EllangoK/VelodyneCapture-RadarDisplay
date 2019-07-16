@@ -23,13 +23,15 @@ int main( int argc, char* argv[] )
 
 
     //Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../test3.pcap";
+    const std::string filename = "../test4.pcap";
     velodyne::VLP16Capture capture( filename );
     //velodyne::HDL32ECapture capture( filename );
     
     int portno = 12345;
-    //5cm up, 16 right, 33 back
-    radar::RadarDisplay radar(portno, 16, -33, -5);
+    //5cm up, 22 right, 33 back for static
+    radar::RadarDisplay radar(portno, 22, -33, -5);
+    //2cm up, 22 right, 11 back for moving
+    //radar::RadarDisplay radar(portno, 22, -22, -2);
     radar.startServer();
     radar.threadRadarRead();
 
@@ -53,10 +55,15 @@ int main( int argc, char* argv[] )
     while( capture.isRun() && !viewer.wasStopped() ){
         usleep(40000);
         // Capture One Rotation Data
-        cv::viz::WCloudCollection collection();
+        cv::viz::WCloudCollection collection;
+
+        std::vector<cv::Vec3f> radarBuffer;
+        radarBuffer = radar.generatePointVec();
+        cv::Mat radarCloudMat = cv::Mat(static_cast<int>(radarBuffer.size()), 1, CV_32FC3, &radarBuffer[0]);
+        collection.addCloud(radarCloudMat, cv::viz::Color::raspberry());
+        
         std::vector<velodyne::Laser> lasers;
-        std::vector<cv::Vec3f> buffer;
-        buffer = radar.generatePointVec();
+        std::vector<cv::Vec3f> laserBuffer(lasers.size());
 
         capture >> lasers;
         if( lasers.empty() ){
@@ -78,14 +85,15 @@ int main( int argc, char* argv[] )
                 y = std::numeric_limits<float>::quiet_NaN();
                 z = std::numeric_limits<float>::quiet_NaN();
             }
-            buffer.push_back( cv::Vec3f( x, y, z ) );
+            laserBuffer.push_back( cv::Vec3f( x, y, z ) );
         }
+        cv::Mat lidarCloudMat = cv::Mat( static_cast<int>(laserBuffer.size() ), 1, CV_32FC3, &laserBuffer[0] );
 
-        // Create Widget
-        cv::Mat cloudMat = cv::Mat( static_cast<int>( buffer.size() ), 1, CV_32FC3, &buffer[0] );
-        cv::viz::WCloud cloud( cloudMat );
-        // Show Point Cloud
-        viewer.showWidget( "Cloud", cloud);
+        collec.addCloud(lidarCloudMat, cv::viz::Color::white());
+        collec.finalize();
+
+        // Show Point Cloud Collection
+        viewer.showWidget( "Cloud", collec);
         viewer.spinOnce();
     }
 
