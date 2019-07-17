@@ -9,6 +9,10 @@
 #include <netinet/in.h>
 #include <thread>
 #include <stdexcept>
+#include <chrono>
+#include <functional>
+#include <ctime>
+#include <inttypes.h>
 
 namespace radar {
 
@@ -20,8 +24,6 @@ class RadarDisplay {
   struct sockaddr_in serv_addr, cli_addr;
 
   float offsetX, offsetY, offsetZ;
-
-  std::thread* thread;
   std::vector<cv::Vec3f> buffer;
 
  public:
@@ -34,6 +36,16 @@ class RadarDisplay {
   };
   // Destructor
   ~RadarDisplay() { close(); };
+  void timedFunction(std::function<void(void)> func, unsigned int interval) {
+    std::thread([func, interval]() {
+      while (true) {
+        auto x = std::chrono::steady_clock::now() +
+                 std::chrono::milliseconds(interval);
+        func();
+        std::this_thread::sleep_until(x);
+      }
+    }).detach();
+  }
   void startServer() {
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
@@ -46,7 +58,7 @@ class RadarDisplay {
     if (bind(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
       error("Binding Error");
     }
-    listen(sockfd, 1);
+    listen(sockfd, 4);
     clilen = sizeof(cli_addr);
     newsockfd = accept(sockfd, (struct sockaddr*)&cli_addr, &clilen);
     if (newsockfd < 0) {
@@ -54,17 +66,10 @@ class RadarDisplay {
     }
     bzero(msgBuffer, 59);
   }
-  void threadRadarRead() {
-    thread = new std::thread(std::bind(&RadarDisplay::radarRead, this));
-  }
+  void threadRadarRead() { timedFunction(std::bind(&RadarDisplay::radarRead, this), 60); }
   void radarRead() {
-    int n;
-    while (true) {
-      n = read(newsockfd, msgBuffer, 59);
-      if (n < 0) error("Socket Read Error");
-      n = write(newsockfd, "I got your message", 18);
-      if (n < 0) error("Socket Write Error");
-    }
+    if (read(newsockfd, msgBuffer, 59) < 0) error("Socket Read Error");
+    if (write(newsockfd, "I got your message", 18) < 0) error("Socket Write Error"); 
   }
   std::vector<double> extractData() {
     std::string radarData;
@@ -93,15 +98,15 @@ class RadarDisplay {
     radarUpperZ = static_cast<float>(radarDataVec[0] / 2.) + offsetZ;
     radarLowerZ = static_cast<float>(-radarDataVec[0] / 2.) + offsetZ;
     radarY = 0.0 + offsetY * 2;  // unknown for now
-    if (radarX != 0.0f && radarUpperZ != 0.0f) {
+    if (radarX != offsetX && radarUpperZ != offsetZ) {
       buffer.clear();
       for (int i = ceil(radarLowerZ); i <= floor(radarUpperZ); i += 2) {
         buffer.push_back(cv::Vec3f(radarX, radarY, i));
         buffer.push_back(cv::Vec3f(radarX, radarY + 1, i));
         buffer.push_back(cv::Vec3f(radarX, radarY + 2, i));
-        buffer.push_back(cv::Vec3f(radarX, radarY + 3, i));
       }
     } else {
+      buffer.clear();
       radarX = std::numeric_limits<float>::quiet_NaN();
       radarUpperZ = std::numeric_limits<float>::quiet_NaN();
       radarY = std::numeric_limits<float>::quiet_NaN();
@@ -110,14 +115,7 @@ class RadarDisplay {
     return buffer;
   }
 
-  void close() {
-    if (thread && thread->joinable()) {
-      thread->join();
-      thread->~thread();
-      delete thread;
-      thread = nullptr;
-    }
-  }
+  void close() {}
 
   void error(const char* msg) {
     perror(msg);

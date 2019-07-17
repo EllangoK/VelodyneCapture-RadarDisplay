@@ -23,7 +23,7 @@ int main( int argc, char* argv[] )
 
 
     //Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../test4.pcap";
+    const std::string filename = "../test3.pcap";
     velodyne::VLP16Capture capture( filename );
     //velodyne::HDL32ECapture capture( filename );
     
@@ -53,7 +53,7 @@ int main( int argc, char* argv[] )
         , &viewer
     );
     while( capture.isRun() && !viewer.wasStopped() ){
-        usleep(40000);
+        usleep(41500);
         // Capture One Rotation Data
         cv::viz::WCloudCollection collection;
 
@@ -89,11 +89,11 @@ int main( int argc, char* argv[] )
         }
         cv::Mat lidarCloudMat = cv::Mat( static_cast<int>(laserBuffer.size() ), 1, CV_32FC3, &laserBuffer[0] );
 
-        collec.addCloud(lidarCloudMat, cv::viz::Color::white());
-        collec.finalize();
+        collection.addCloud(lidarCloudMat, cv::viz::Color::white());
+        collection.finalize();
 
         // Show Point Cloud Collection
-        viewer.showWidget( "Cloud", collec);
+        viewer.showWidget( "Cloud", collection);
         viewer.spinOnce();
     }
 
