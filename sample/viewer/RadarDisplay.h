@@ -183,12 +183,22 @@ class RadarDisplay {
     }
     return (maxZ / static_cast<float>(size));
   }
-  float findAvgX() {
-    float X = 0.0f;
+  float findMinAvgX(int numSamples) {
+    std::vector<float> minXVec;
+    int count = 0;
     for (int i = 0; i < lidarPointsInRange.size(); i++) {
-      X += lidarPointsInRange[i][0];
+      minXVec.push_back(lidarPointsInRange[i][0]);
     }
-    return X / static_cast<float>(lidarPointsInRange.size());
+    float minX = 0.0f;
+    int minXSize = minXVec.size();
+    int size = std::min(numSamples, minXSize);
+    for (int i = 0; i < size; i++) {
+      int minIndex = std::distance(
+          minXVec.begin(), std::min_element(minXVec.begin(), minXVec.end()));
+      minX += minXVec[minIndex];
+      minXVec.erase(minXVec.begin() + minIndex);
+    }
+    return (minX / static_cast<float>(size));
   }
 
   void fitToLidar(std::vector<cv::Vec3f> lidarPoints) {
@@ -196,9 +206,9 @@ class RadarDisplay {
       findPointsInRange(lidarPoints, 5);
     } else if (cycles == 210) {
       groundZ = findMinAvgZ(100);
-      float avgX = findAvgX(), avgCurbHeight = findMaxAvgZ(100);
+      float avgMinX = findMinAvgX(100), avgCurbHeight = findMaxAvgZ(100);
       scaleZ *= (avgCurbHeight - groundZ) / (radarUpperZ - radarLowerZ);
-      scaleX *= avgX / radarX;
+      scaleX *= avgMinX / radarX;
       lidarOffsetZ = groundZ - scaleZ * radarLowerZ;
     }
     cycles++;
