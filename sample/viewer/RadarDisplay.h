@@ -27,7 +27,7 @@ class RadarDisplay {
   socklen_t clilen;
   struct sockaddr_in serv_addr, cli_addr;
 
-  float offsetX, offsetY, offsetZ;
+  float offsetX, offsetY, offsetZ, lidarOffsetZ = 0;
   float radarX, radarUpperZ, radarLowerZ, radarY;
   float groundZ = 0, scaleZ = 1, scaleX = 1;
   int cycles = 0;
@@ -56,9 +56,6 @@ class RadarDisplay {
   }
   bool isInPercentTolerance(float measured, float actual,
                             float percentTolerance) {
-    std::cout << "measured: " << measured << " actual: " << actual
-              << " error: " << fabs((measured - actual) / actual) * 100.
-              << std::endl;
     return (fabs((measured - actual) / actual) * 100. <= percentTolerance);
   }
   void startServer() {
@@ -85,9 +82,6 @@ class RadarDisplay {
     timedFunction(std::bind(&RadarDisplay::radarRead, this), 20);
   }
   void radarRead() {
-    // u_int64_t now =
-    // std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    // std::cout << now << std::endl;
     if (read(newsockfd, msgBuffer, 59) < 0) error("Socket Read Error");
     if (write(newsockfd, "I got your message", 18) < 0)
       error("Socket Write Error");
@@ -116,9 +110,12 @@ class RadarDisplay {
     std::vector<double> radarDataVec;
     radarDataVec = extractData();
     radarX = (static_cast<float>(radarDataVec[1]) + offsetX) * scaleX;
-    radarUpperZ = (static_cast<float>(radarDataVec[0] / 2.) + offsetZ) * scaleZ;
+    radarUpperZ =
+        (static_cast<float>(radarDataVec[0] / 2.) + offsetZ) * scaleZ +
+        lidarOffsetZ;
     radarLowerZ =
-        (static_cast<float>(-radarDataVec[0] / 2.) + offsetZ) * scaleZ;
+        (static_cast<float>(-radarDataVec[0] / 2.) + offsetZ) * scaleZ +
+        lidarOffsetZ;
     radarY = 0.0 + offsetY * 2;  // unknown for now
     if (radarX != offsetX && radarUpperZ != offsetZ) {
       buffer.clear();
@@ -145,76 +142,66 @@ class RadarDisplay {
       if (!preFlag) {
         if (isInPercentTolerance(radarX, lidarPoints[i][0], percentTolerance)) {
           lidarPointsInRange.push_back(lidarPoints[i]);
-          std::cout << lidarPoints[i][0] << std::endl;
         }
       }
     }
   }
-  float findAvgGroundZ() {
-    std::vector<float> groundZVec;
+  float findMinAvgZ(int numSamples) {
+    std::vector<float> minZVec;
     int count = 0;
     for (int i = 0; i < lidarPointsInRange.size(); i++) {
-      groundZVec.push_back(lidarPointsInRange[i][2]);
+      minZVec.push_back(lidarPointsInRange[i][2]);
     }
-    float groundZ = 0.0f;
-    int groundZSize = groundZVec.size();
-    int size = std::min(40, groundZSize);
+    float minZ = 0.0f;
+    int minZSize = minZVec.size();
+    int size = std::min(numSamples, minZSize);
     for (int i = 0; i < size; i++) {
-      int minIndex =
-          std::distance(groundZVec.begin(),
-                        std::min_element(groundZVec.begin(), groundZVec.end()));
-      groundZ += groundZVec[minIndex];
-      groundZVec.erase(groundZVec.begin() + minIndex);
+      int minIndex = std::distance(
+          minZVec.begin(), std::min_element(minZVec.begin(), minZVec.end()));
+      minZ += minZVec[minIndex];
+      minZVec.erase(minZVec.begin() + minIndex);
     }
-    groundZ /= size;
-    return groundZ;
+    return (minZ / static_cast<float>(size));
   }
-  float findAvgCurbHeight() {
+  float findMaxAvgZ(int numSamples) {
     std::vector<float> maxZVec;
     int count = 0;
     for (int i = 0; i < lidarPointsInRange.size(); i++) {
-      if (lidarPointsInRange[i][2] <= (groundZ += 30)) {
+      if (lidarPointsInRange[i][2] <= (groundZ + 30) &&
+          lidarPointsInRange[i][2] >= groundZ) {
         maxZVec.push_back(lidarPointsInRange[i][2]);
       }
     }
     float maxZ = 0.0f;
     int maxZVecSize = maxZVec.size();
-    int size = std::min(40, maxZVecSize);
+    int size = std::min(numSamples, maxZVecSize);
     for (int i = 0; i < size; i++) {
       int maxIndex = std::distance(
-          maxZVec.begin(), std::min_element(maxZVec.begin(), maxZVec.end()));
-      groundZ += maxZVec[maxIndex];
+          maxZVec.begin(), std::max_element(maxZVec.begin(), maxZVec.end()));
+      maxZ += maxZVec[maxIndex];
       maxZVec.erase(maxZVec.begin() + maxIndex);
     }
-    maxZ /= size;
-    return maxZ;
+    return (maxZ / static_cast<float>(size));
   }
   float findAvgX() {
     float X = 0.0f;
-    std::cout << "size: " << lidarPointsInRange.size() << std::endl;
     for (int i = 0; i < lidarPointsInRange.size(); i++) {
       X += lidarPointsInRange[i][0];
     }
-    return X / lidarPointsInRange.size();
+    return X / static_cast<float>(lidarPointsInRange.size());
   }
 
   void fitToLidar(std::vector<cv::Vec3f> lidarPoints) {
-    if (cycles > 99 && cycles < 110) {
+    if (cycles > 199 && cycles < 210) {
       findPointsInRange(lidarPoints, 5);
-    } else if (cycles == 110) {
-      groundZ = findAvgGroundZ();
-      float avgX = findAvgX(), avgCurbHeight = findAvgCurbHeight();
-      scaleZ = (avgCurbHeight - groundZ) / (radarUpperZ - radarLowerZ);
-      scaleX = avgX / radarX;
-      std::cout << "scaleZ: " << scaleZ << " scaleX: " << scaleX << std::endl;
-      std::cout << "avgCurbHeight: " << avgCurbHeight << " groundZ: " << groundZ
-                << std::endl;
-      std::cout << "radarUpperZ: " << radarUpperZ
-                << " radarLowerZ: " << radarLowerZ << std::endl;
-      std::cout << "avgX: " << avgX << " radarX: " << radarX << std::endl;
+    } else if (cycles == 210) {
+      groundZ = findMinAvgZ(100);
+      float avgX = findAvgX(), avgCurbHeight = findMaxAvgZ(100);
+      scaleZ *= (avgCurbHeight - groundZ) / (radarUpperZ - radarLowerZ);
+      scaleX *= avgX / radarX;
+      lidarOffsetZ = groundZ - scaleZ * radarLowerZ;
     }
     cycles++;
-    std::cout << cycles << std::endl;
   }
 
   void close() {}
