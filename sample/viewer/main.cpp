@@ -30,8 +30,8 @@ int main( int argc, char* argv[] )
     int portno = 12345;
     //5cm up, 22 right, 33 back for static
     radar::RadarDisplay radar(portno, 22, -33, -5);
-    //2cm up, 22 right, 11 back for moving
-    //radar::RadarDisplay radar(portno, 22, -22, -2);
+    //2cm up, 16 right, 11 back for moving
+    //radar::RadarDisplay radar(portno, 16, -22, -2);
     radar.startServer();
     radar.threadRadarRead();
 
@@ -53,7 +53,6 @@ int main( int argc, char* argv[] )
         , &viewer
     );
     while( capture.isRun() && !viewer.wasStopped() ){
-        usleep(41500);
         // Capture One Rotation Data
         cv::viz::WCloudCollection collection;
 
@@ -87,16 +86,17 @@ int main( int argc, char* argv[] )
             }
             laserBuffer.push_back( cv::Vec3f( x, y, z ) );
         }
+        radar.fitToLidar(laserBuffer);
         cv::Mat lidarCloudMat = cv::Mat( static_cast<int>(laserBuffer.size() ), 1, CV_32FC3, &laserBuffer[0] );
 
         collection.addCloud(lidarCloudMat, cv::viz::Color::white());
         collection.finalize();
+        usleep(43050);
 
         // Show Point Cloud Collection
         viewer.showWidget( "Cloud", collection);
         viewer.spinOnce();
     }
-
     // Close All Viewers
     cv::viz::unregisterAllWindows();
     radar.close();
