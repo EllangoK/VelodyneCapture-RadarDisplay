@@ -23,15 +23,15 @@ int main( int argc, char* argv[] )
 
 
     //Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../test3.pcap";
+    const std::string filename = "../test7.pcap";
     velodyne::VLP16Capture capture( filename );
     //velodyne::HDL32ECapture capture( filename );
     
     int portno = 12345;
     //5cm up, 22 right, 33 back for static
-    radar::RadarDisplay radar(portno, 22, -33, -5);
+    //radar::RadarDisplay radar(portno, 22, -33, -5);
     //2cm up, 16 right, 11 back for moving
-    //radar::RadarDisplay radar(portno, 16, -22, -2);
+    radar::RadarDisplay radar(portno, 24, -10, -8);
     radar.startServer();
     radar.threadRadarRead();
 
@@ -87,11 +87,15 @@ int main( int argc, char* argv[] )
             laserBuffer.push_back( cv::Vec3f( x, y, z ) );
         }
         radar.fitToLidar(laserBuffer);
+        std::vector<cv::Vec3f> selectedPoints = radar.pointsInRange();
+
         cv::Mat lidarCloudMat = cv::Mat( static_cast<int>(laserBuffer.size() ), 1, CV_32FC3, &laserBuffer[0] );
+        cv::Mat selectedPointsMat = cv::Mat( static_cast<int>(selectedPoints.size() ), 1, CV_32FC3, &selectedPoints[0] );
 
         collection.addCloud(lidarCloudMat, cv::viz::Color::white());
+        collection.addCloud(selectedPointsMat, cv::viz::Color::blue());
         collection.finalize();
-        usleep(43050);
+        usleep(43000);
 
         // Show Point Cloud Collection
         viewer.showWidget( "Cloud", collection);
