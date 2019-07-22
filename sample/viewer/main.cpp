@@ -13,6 +13,25 @@
 #include <future>
 #include <unistd.h>
 
+cv::Vec3f yaw(cv::Vec3f point, float a) {
+    float x = cosf(a) * point[0] + -sinf(a) * point[1];
+    float y = sinf(a) * point[0] + cosf(a) * point[1];
+    return cv::Vec3f(x, y, point[2]);
+}
+cv::Vec3f pitch(cv::Vec3f point, float b) {
+    float x = cosf(b) * point[0] + sinf(b) * point[2];
+    float z = -sinf(b) * point[0] + cosf(b) * point[2];
+    return cv::Vec3f(x, point[1], z);
+}
+cv::Vec3f roll(cv::Vec3f point, float c) {
+    float y = cosf(c) * point[1] + -sinf(c) * point[2];
+    float z = sinf(c) * point[1] + cosf(c) * point[2];
+    return cv::Vec3f(point[0], y, z);
+}
+cv::Vec3f rotateEulerAngles(cv::Vec3f point, float a, float b, float c) {
+    return roll(pitch(yaw(point, a), b), c);
+}
+
 int main( int argc, char* argv[] )
 {
     // Open VelodyneCapture that retrieve from Sensor
@@ -84,7 +103,7 @@ int main( int argc, char* argv[] )
                 y = std::numeric_limits<float>::quiet_NaN();
                 z = std::numeric_limits<float>::quiet_NaN();
             }
-            laserBuffer.push_back( cv::Vec3f( x, y, z ) );
+            laserBuffer.push_back(rotateEulerAngles(cv::Vec3f(x, y, z), 0*CV_PI, 0*CV_PI, 0*CV_PI));
         }
         radar.fitToLidar(laserBuffer);
         std::vector<cv::Vec3f> selectedPoints = radar.pointsInRange();
