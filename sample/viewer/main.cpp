@@ -42,7 +42,7 @@ int main( int argc, char* argv[] )
 
 
     //Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../test7.pcap";
+    const std::string filename = "../test5.pcap";
     velodyne::VLP16Capture capture( filename );
     //velodyne::HDL32ECapture capture( filename );
     
@@ -106,7 +106,7 @@ int main( int argc, char* argv[] )
             laserBuffer.push_back(rotateEulerAngles(cv::Vec3f(x, y, z), 0*CV_PI, 0*CV_PI, 0*CV_PI));
         }
         radar.fitToLidar(laserBuffer);
-        std::vector<cv::Vec3f> selectedPoints = radar.pointsInRange();
+        std::vector<cv::Vec3f> selectedPoints = radar.returnLidarPointsInRange();
 
         cv::Mat lidarCloudMat = cv::Mat( static_cast<int>(laserBuffer.size() ), 1, CV_32FC3, &laserBuffer[0] );
         cv::Mat selectedPointsMat = cv::Mat( static_cast<int>(selectedPoints.size() ), 1, CV_32FC3, &selectedPoints[0] );
