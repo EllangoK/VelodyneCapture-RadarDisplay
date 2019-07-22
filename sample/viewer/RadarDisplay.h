@@ -117,9 +117,10 @@ class RadarDisplay {
     radarUpperZ =
         (static_cast<float>(radarDataVec[0] / 2.) + offsetZ) * scaleZ +
         lidarOffsetZ;
-    radarLowerZ =
+    /* radarLowerZ =
         (static_cast<float>(-radarDataVec[0] / 2.) + offsetZ) * scaleZ +
-        lidarOffsetZ;
+        lidarOffsetZ; Deprecated */ 
+    radarLowerZ = groundZ;
     radarY = 0.0 + offsetY * 2;  // unknown for now
     if (radarX != offsetX && radarUpperZ != offsetZ) {
       buffer.clear();
@@ -146,9 +147,9 @@ class RadarDisplay {
       scaleZ *= (avgCurbHeight - groundZ) / (radarUpperZ - radarLowerZ);
       scaleX *= avgMinX / radarX;
       lidarOffsetZ = groundZ - scaleZ * radarLowerZ;
-      std::cout << "scaleZ: " << scaleZ << " scaleX: " << scaleX << std::endl;
+      std::cout << "scaleZ: " << scaleZ << " scaleX: " << scaleX << " avgMinX: " << avgMinX << std::endl;
       std::cout << "radarUpperZ: " << radarUpperZ
-                << " radarLowerZ: " << radarLowerZ << std::endl;
+                << " radarLowerZ: " << radarLowerZ << " radarX: " << radarX << std::endl;
       std::cout << "groundZ: " << groundZ << " curbHeight: " << avgCurbHeight
                 << " lidarOffsetZ: " << lidarOffsetZ << std::endl;
     }
@@ -239,7 +240,14 @@ class RadarDisplay {
     return (minX / static_cast<float>(size));
   }
   void calculateScaleZ() {
-    if (!isnanf(radarX)) scaleZ = 1.1 * exp(-0.491 * (radarX / 100.));
+    if (!isnanf(radarX)) {
+      if (radarX >= 30) {
+        scaleZ = 0.713 + -0.437 * logf((radarX - 30)/100.);
+      } else {
+        radarX = 35;
+        calculateScaleZ();
+      }
+    }
   }
 
   void close() {}
