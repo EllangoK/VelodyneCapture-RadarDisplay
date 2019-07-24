@@ -12,6 +12,7 @@
 #include <thread>
 #include <future>
 #include <unistd.h>
+#include <X11/Xlib.h>
 
 cv::Vec3f yaw(cv::Vec3f point, float a) {
     float x = cosf(a) * point[0] + -sinf(a) * point[1];
@@ -31,7 +32,50 @@ cv::Vec3f roll(cv::Vec3f point, float c) {
 cv::Vec3f rotateEulerAngles(cv::Vec3f point, float a, float b, float c) {
     return roll(pitch(yaw(point, a), b), c);
 }
+void timedFunction(std::function<void(void)> func, unsigned int interval) {
+std::thread([func, interval]() {
+    while (true) {
+    auto x = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(interval);
+    func();
+    std::this_thread::sleep_until(x);
+    }
+}).detach();
+}
 
+std::vector<cv::Vec3f> laserBuffer;
+std::vector<cv::Vec3f> radarBuffer;
+bool working = false;
+
+void generateCloud (radar::RadarDisplay radar, velodyne::VLP16Capture* capture) {
+    working = true;
+    std::vector<velodyne::Laser> lasers;
+    *capture >> lasers;
+    if(lasers.empty()) {
+        return;
+    }
+    radarBuffer.clear();
+    radarBuffer = radar.generatePointVec();
+    // Convert to 3-dimention Coordinates
+    laserBuffer.clear();
+    for( const velodyne::Laser& laser : lasers ){
+        const double distance = static_cast<double>( laser.distance );
+        const double azimuth  = laser.azimuth  * CV_PI / 180.0;
+        const double vertical = laser.vertical * CV_PI / 180.0;
+
+        float x = static_cast<float>( ( distance * std::cos( vertical ) ) * std::sin( azimuth ) );
+        float y = static_cast<float>( ( distance * std::cos( vertical ) ) * std::cos( azimuth ) );
+        float z = static_cast<float>( ( distance * std::sin( vertical ) ) );
+
+        if( x == 0.0f && y == 0.0f && z == 0.0f ){
+            x = std::numeric_limits<float>::quiet_NaN();
+            y = std::numeric_limits<float>::quiet_NaN();
+            z = std::numeric_limits<float>::quiet_NaN();
+        }
+        laserBuffer.push_back(rotateEulerAngles(cv::Vec3f(x, y, z), 0*CV_PI, 0*CV_PI, -1./11.*CV_PI));
+    }
+    working = false;
+}
 int main( int argc, char* argv[] )
 {
     // Open VelodyneCapture that retrieve from Sensor
@@ -42,17 +86,20 @@ int main( int argc, char* argv[] )
 
 
     //Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../test5.pcap";
+    const std::string filename = "../kesselRun.pcap";
     velodyne::VLP16Capture capture( filename );
     //velodyne::HDL32ECapture capture( filename );
     
-    int portno = 12345;
+    int portno = 12348;
     //5cm up, 22 right, 33 back for static
     //radar::RadarDisplay radar(portno, 22, -33, -5);
     //2cm up, 16 right, 11 back for moving
-    radar::RadarDisplay radar(portno, 24, -10, -8);
+    radar::RadarDisplay radar(portno, 24, 11, -8);
     radar.startServer();
     radar.threadRadarRead();
+    std::vector<double> test;
+    radar.radarRead(test);
+    //std::cout << test[0] << std::endl;
 
     if( !capture.isOpen() ){
         std::cerr << "Can't open VelodyneCapture." << std::endl;
@@ -71,57 +118,48 @@ int main( int argc, char* argv[] )
         }
         , &viewer
     );
+    usleep(3000000);
+    timedFunction(std::bind(generateCloud, radar, &capture), 100);
+    std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer;
     while( capture.isRun() && !viewer.wasStopped() ){
         // Capture One Rotation Data
-        cv::viz::WCloudCollection collection;
-
-        std::vector<cv::Vec3f> radarBuffer;
-        radarBuffer = radar.generatePointVec();
-        cv::Mat radarCloudMat = cv::Mat(static_cast<int>(radarBuffer.size()), 1, CV_32FC3, &radarBuffer[0]);
-        collection.addCloud(radarCloudMat, cv::viz::Color::raspberry());
-        
-        std::vector<velodyne::Laser> lasers;
-        std::vector<cv::Vec3f> laserBuffer(lasers.size());
-
-        capture >> lasers;
-        if( lasers.empty() ){
+        if (working) {
             continue;
-        }
+        } else {
+            cv::viz::WCloudCollection collection;
+            if (laserBuffer.size() != 0 || radarBuffer.size() != 0) {
+                if (localLaserBuffer.size() != laserBuffer.size()) {localLaserBuffer = laserBuffer;}
+                cv::Mat lidarCloudMat = cv::Mat( static_cast<int>(localLaserBuffer.size()), 1, CV_32FC3, &localLaserBuffer[0] );
+                collection.addCloud(lidarCloudMat, cv::viz::Color::white());
 
-        // Convert to 3-dimention Coordinates
-        for( const velodyne::Laser& laser : lasers ){
-            const double distance = static_cast<double>( laser.distance );
-            const double azimuth  = laser.azimuth  * CV_PI / 180.0;
-            const double vertical = laser.vertical * CV_PI / 180.0;
+                if (localRadarBuffer.size() != radarBuffer.size()) {localRadarBuffer = radarBuffer;}
+                cv::Mat radarCloudMat = cv::Mat( static_cast<int>(localRadarBuffer.size()), 1, CV_32FC3, &localRadarBuffer[0]);
+                collection.addCloud(radarCloudMat, cv::viz::Color::raspberry());
 
-            float x = static_cast<float>( ( distance * std::cos( vertical ) ) * std::sin( azimuth ) );
-            float y = static_cast<float>( ( distance * std::cos( vertical ) ) * std::cos( azimuth ) );
-            float z = static_cast<float>( ( distance * std::sin( vertical ) ) );
-
-            if( x == 0.0f && y == 0.0f && z == 0.0f ){
-                x = std::numeric_limits<float>::quiet_NaN();
-                y = std::numeric_limits<float>::quiet_NaN();
-                z = std::numeric_limits<float>::quiet_NaN();
+                collection.finalize();
+                viewer.showWidget( "Cloud", collection);
+                viewer.spinOnce();
             }
-            laserBuffer.push_back(rotateEulerAngles(cv::Vec3f(x, y, z), 0*CV_PI, 0*CV_PI, 0*CV_PI));
         }
-        radar.fitToLidar(laserBuffer);
+
+        
+        /* radar.fitToLidar(laserBuffer);
+        
         std::vector<cv::Vec3f> selectedPoints = radar.returnLidarPointsInRange();
-
-        cv::Mat lidarCloudMat = cv::Mat( static_cast<int>(laserBuffer.size() ), 1, CV_32FC3, &laserBuffer[0] );
         cv::Mat selectedPointsMat = cv::Mat( static_cast<int>(selectedPoints.size() ), 1, CV_32FC3, &selectedPoints[0] );
-
-        collection.addCloud(lidarCloudMat, cv::viz::Color::white());
-        collection.addCloud(selectedPointsMat, cv::viz::Color::blue());
-        collection.finalize();
-        usleep(43000);
-
+        ollection.addCloud(selectedPointsMat, cv::viz::Color::blue());
+       
+        std::vector<cv::Vec3f> obj = radar.returnFirstObject();
+        std::vector<cv::Vec3f> obj2 = radar.returnSecondObject();
+        cv::Mat objMat = cv::Mat( static_cast<int>(obj.size() ), 1, CV_32FC3, &obj[0] );
+        cv::Mat obj2Mat = cv::Mat( static_cast<int>(obj2.size() ), 1, CV_32FC3, &obj2[0] );
+        collection.addCloud(objMat, cv::viz::Color::green());
+        collection.addCloud(obj2Mat, cv::viz::Color::purple()); */
+       
         // Show Point Cloud Collection
-        viewer.showWidget( "Cloud", collection);
-        viewer.spinOnce();
     }
     // Close All Viewers
     cv::viz::unregisterAllWindows();
-    radar.close();
+    //radar.close();
     return 0;
 }
