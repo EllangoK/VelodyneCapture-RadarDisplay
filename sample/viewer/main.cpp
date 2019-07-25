@@ -127,9 +127,10 @@ int main(int argc, char* argv[]) {
   std::thread t1;
   std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer;
   while (!viewer.wasStopped() || !radar.isEmpty() || true) {
-    if (radar.getQueueSize() == 370) {
+    if (radar.isQueueBuildOver()) {
       timedFunction(exposeLaserBuffer, 100);
       t1 = std::thread(std::bind(updateRadarBuffer, &radar));
+      radar.resetQueueBuild();
     }
     cv::viz::WCloudCollection collection;
     if (localLaserBuffer.size() != laserBuffer.size()) {

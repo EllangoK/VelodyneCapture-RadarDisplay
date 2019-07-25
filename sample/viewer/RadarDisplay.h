@@ -42,7 +42,7 @@ class RadarDisplay {
   float radarX, radarUpperZ, radarLowerZ, radarY;
   float avgCurbHeight = 0, groundZ = 0, scaleZ = 1, scaleX = 1;
   int cycles = 0;
-  bool endOfReplay = false;
+  std::atomic_bool queueBuildFlag = {false};
   std::vector<cv::Vec3f> lidarPointsInRange, firstObject, secondObject;
   std::string radarData;
 
@@ -59,9 +59,15 @@ class RadarDisplay {
   // Destructor
   ~RadarDisplay() { close(); };
 
+  bool isQueueBuildOver() {
+    return queueBuildFlag;
+  }
+  void resetQueueBuild() {
+    queueBuildFlag = {false};
+  }
   bool isRun() {
     std::lock_guard<std::mutex> lock(mutex);
-    return (run || !queue.empty() || endOfReplay);
+    return (run || !queue.empty());
   }
   bool isInPercentTolerance(float measured, float actual,
                             float percentTolerance) {
@@ -117,15 +123,17 @@ class RadarDisplay {
     });
   }
   void updateQueue() {
-    if (endOfReplay) {
-      return;
-    }
     mutex.lock();
     if (read(newsockfd, msgBuffer, 29) < 0) {
       error("Socket Read Error");
     } else {
       msgBuffer[29] = '\0';
-      std::vector<cv::Vec3f> temp = extractData(std::string(msgBuffer));
+      std::string msg(msgBuffer);
+      if (msg == "99999999999999999999999999999") {
+        queueBuildFlag = {true};
+        return;
+      }
+      std::vector<cv::Vec3f> temp = extractData(msg);
       queue.push(temp);
       queueSize += 1;
     }
@@ -158,8 +166,6 @@ class RadarDisplay {
     // radarLowerZ = groundZ;
     radarY = 0.0 + offsetY;  // unknown for now
     if (length != 0.0 && distance != 0.0) {
-      // std::cout << "radarX: " << radarX << " radarUpperZ: " << radarUpperZ <<
-      // " radarLowerZ: " << radarLowerZ << std::endl;
       for (int i = ceil(radarLowerZ); i <= floor(radarUpperZ); i += 2) {
         buffer.push_back(cv::Vec3f(radarX, radarY, i));
         buffer.push_back(cv::Vec3f(radarX, radarY + 1, i));
@@ -389,20 +395,18 @@ class RadarDisplay {
     return y / static_cast<float>(cycles);
   }
 
+  void closeThread(std::thread* thread) {
+    if (thread && thread->joinable()) {
+      thread->join();
+      thread->~thread();
+      delete thread;
+      thread = nullptr;
+    }
+  }
   void close() {
     run = false;
-    if (threadQueueRead && threadQueueRead->joinable()) {
-      threadQueueRead->join();
-      threadQueueRead->~thread();
-      delete threadQueueRead;
-      threadQueueRead = nullptr;
-    }
-    if (threadQueueWrite && threadQueueWrite->joinable()) {
-      threadQueueWrite->join();
-      threadQueueWrite->~thread();
-      delete threadQueueWrite;
-      threadQueueWrite = nullptr;
-    }
+    closeThread(threadQueueRead);
+    closeThread(threadQueueWrite);
   }
 
   void error(const char* msg) {
