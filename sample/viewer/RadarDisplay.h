@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <chrono>
 #include <ctime>
+#include <atomic>
+#include <mutex>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -23,23 +25,29 @@ namespace radar {
 
 class RadarDisplay {
  protected:
+
+  std::thread* threadQueueRead = nullptr;
+  std::thread* threadQueueWrite = nullptr;
+  std::atomic_bool run = { false };
+  std::atomic_bool newData = { false };
+  std::mutex mutex;
+  std::queue<std::vector<cv::Vec3f>> queue;
+
   int sockfd, newsockfd, portno;
-  char msgBuffer[59];
+  char msgBuffer[29];
   socklen_t clilen;
   struct sockaddr_in serv_addr, cli_addr;
 
-  float offsetX, offsetY, offsetZ, lidarOffsetZ = -48.5112;
+  float offsetX, offsetY, offsetZ, lidarOffsetZ = 0;
   float radarX, radarUpperZ, radarLowerZ, radarY;
-  float avgCurbHeight = 0, groundZ = -66.67944167, scaleZ = 1, scaleX = 0.9649026667;
+  float avgCurbHeight = 0, groundZ = 0, scaleZ = 1, scaleX = 1;
   int cycles = 0;
-  std::vector<cv::Vec3f> buffer;
+  bool endOfReplay = false;
   std::vector<cv::Vec3f> lidarPointsInRange, firstObject, secondObject;
   std::vector<double> radarDataVec;
   std::vector<double> radarDataVec2;
-  std::queue<std::string> socketQueue;
   std::string radarData;
-  bool working = false;
-  bool newData = false;
+  uint64_t prevTime;
 
  public:
   // Constructor
@@ -48,29 +56,23 @@ class RadarDisplay {
     offsetX = X;
     offsetY = Y;
     offsetZ = Z;
-    radarDataVec.push_back(0);
-    radarDataVec.push_back(0);
-    radarX = std::numeric_limits<float>::quiet_NaN();
-    radarUpperZ = std::numeric_limits<float>::quiet_NaN();
-    radarY = std::numeric_limits<float>::quiet_NaN();
-    buffer.push_back(cv::Vec3f(radarX, radarY, radarUpperZ));
+    startServer();
+    threadRadarRead();
   };
   // Destructor
   ~RadarDisplay() { close(); };
 
-  void timedFunction(std::function<void(void)> func, unsigned int interval) {
-    std::thread([func, interval]() {
-      while (interval) {
-        auto x = std::chrono::steady_clock::now() +
-                 std::chrono::milliseconds(interval);
-        func();
-        std::this_thread::sleep_until(x);
-      }
-    }).detach();
+  bool isRun() {
+      std::lock_guard<std::mutex> lock( mutex );
+      return ( run || !queue.empty() || endOfReplay);
   }
   bool isInPercentTolerance(float measured, float actual,
                             float percentTolerance) {
     return (fabs((measured - actual) / actual) * 100. <= percentTolerance);
+  }
+  bool isEmpty() {
+      std::lock_guard<std::mutex> lock( mutex );
+      return queue.empty();
   }
 
   void startServer() {
@@ -91,89 +93,113 @@ class RadarDisplay {
     if (newsockfd < 0) {
       error("Connection Accept Error");
     }
-    bzero(msgBuffer, 59);
+    bzero(msgBuffer, 29);
   }
   void threadRadarRead() {
-    timedFunction(std::bind(&RadarDisplay::updateQueue, this), 10);
-    timedFunction(std::bind(&RadarDisplay::radarRead, this, radarDataVec2), 250);
+    run = true;
+    auto funcUpdateQueue = std::bind(&RadarDisplay::updateQueue, this);
+    unsigned int updateTime = 50;
+    prevTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    threadQueueWrite = new std::thread([funcUpdateQueue, updateTime]() {
+        while (updateTime) {
+        auto x = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(updateTime);
+        funcUpdateQueue();
+        std::this_thread::sleep_until(x);
+        }
+    });
+    auto funcExposeQueue = std::bind(&RadarDisplay::exposeQueue, this);
+    unsigned int exposeTime = 250;
+    threadQueueRead = new std::thread([funcExposeQueue, exposeTime]() {
+        while (exposeTime) {
+        auto x = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(exposeTime);
+        funcExposeQueue();
+        std::this_thread::sleep_until(x);
+        }
+    });
   }
   void updateQueue() {
-    if (working) {return;}
-    if (read(newsockfd, msgBuffer, 59) < 0) {
+    if(endOfReplay) {return;}
+    mutex.lock();                      
+    if (read(newsockfd, msgBuffer, 29) < 0) {
       error("Socket Read Error");
     } else {
-      msgBuffer[59] = '\0';
-      socketQueue.push(std::string(msgBuffer));
+      uint64_t currentTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+      prevTime = currentTime;
+      msgBuffer[29] = '\0';
+      std::cout << "std::string(msgBuffer): " << (std::string(msgBuffer)) << std::endl;
+      std::vector<cv::Vec3f> temp = extractData(std::string(msgBuffer));
+      std::cout << "updateQueue" << temp[0][0] << std::endl;
+      queue.push(temp);
     }
-    if (write(newsockfd, "I got your message", 18) < 0)
+    if (write(newsockfd, "I got your message", 18) < 0) {
       error("Socket Write Error");
+    }  
+    mutex.unlock();
   }
-  void radarRead(std::vector<double>& radarDataVec2) {
-    working = true;
-    if (socketQueue.size() > 0) {
-      std::cout << "socketQueue: " << socketQueue.front() << std::endl;
-      radarData = socketQueue.front().c_str();
-      extractData(radarDataVec2);
-      socketQueue.pop();
-     std::cout << "lengthRdr2: " << radarDataVec2[0] << std::endl;
-    }
-    newData = true;
-    working = false;
-  }
+  void exposeQueue() {newData = {true};}
 
-  void extractData(std::vector<double>& radarDataVec2) {
-    std::string localRadarData = radarData;
-    double lengthRdr, widthRdr, distanceRdr, angleRdr;
-    // * 100 to convert to centimeters
+  std::vector<cv::Vec3f> extractData(std::string localRadarData) {
+    double lengthRdr, distanceRdr;
     try {
       lengthRdr = atof(localRadarData.substr(0, 14).c_str()) * 100.;
-      widthRdr = atof(localRadarData.substr(15, 29).c_str()) * 100.;
-      distanceRdr = atof(localRadarData.substr(30, 44).c_str()) * 100.;
-      angleRdr = atof(localRadarData.substr(45, 59).c_str()) * 100.;
+      distanceRdr = atof(localRadarData.substr(15, 29).c_str()) * 100.;
     } catch (const std::out_of_range& oor) {
       lengthRdr = 0.;
       distanceRdr = 0.;
     }
-    radarDataVec2.clear();
-    radarDataVec2.push_back(lengthRdr);
-    radarDataVec2.push_back(distanceRdr);
+      std::cout << "lengthRdr: " << lengthRdr << std::endl;
+    return generatePointVec(static_cast<float>(lengthRdr), static_cast<float>(distanceRdr));
   }
-  std::vector<cv::Vec3f> generatePointVec() {
-    if (working) {return buffer;}
-    if (newData) {
-    std::cout << "newData according to generate:" << newData << " " << (radarDataVec2[0]) << std::endl;
-      newData = false;
-      radarX = (static_cast<float>((radarDataVec2)[1]) + offsetX) * scaleX;
+  std::vector<cv::Vec3f> generatePointVec(float length, float distance) {
+      std::vector<cv::Vec3f> buffer;
+      radarX = (distance + offsetX) * scaleX;
       std::cout << "radarX: " << radarX << std::endl;
       calculateScaleZ();
-      radarUpperZ =
-          (static_cast<float>(((radarDataVec2)[0]) / 2.) + offsetZ) * scaleZ +
-          lidarOffsetZ;
-      radarLowerZ =
-          (static_cast<float>(((radarDataVec2)[0]) / 2.) + offsetZ) * scaleZ +
-          lidarOffsetZ; //Deprecated */
+      radarUpperZ = ((length / 2.) + offsetZ) * scaleZ + lidarOffsetZ;
+      radarLowerZ = ((-length / 2.) + offsetZ) * scaleZ + lidarOffsetZ;
+      //Deprecated
       //radarLowerZ = groundZ;
       radarY = 0.0 + offsetY;  // unknown for now
-      std::cout << "fails 3" << std::endl;
-      if (radarX != offsetX && radarUpperZ != offsetZ) {
-        buffer.clear();
+      if (length != 0.0 && distance != 0.0) {
+        std::cout << "radarX: " << radarX << " radarUpperZ: " << radarUpperZ << " radarLowerZ: " << radarLowerZ << std::endl;
         for (int i = ceil(radarLowerZ); i <= floor(radarUpperZ); i += 2) {
           buffer.push_back(cv::Vec3f(radarX, radarY, i));
           buffer.push_back(cv::Vec3f(radarX, radarY + 1, i));
           buffer.push_back(cv::Vec3f(radarX, radarY + 2, i));
         }
+        std::cout << "generated valid buffer" << std::endl;
+        std::cout << "generatePointVec" << buffer[0][0] << std::endl;
       } else {
         radarX = std::numeric_limits<float>::quiet_NaN();
         radarUpperZ = std::numeric_limits<float>::quiet_NaN();
         radarY = std::numeric_limits<float>::quiet_NaN();
         buffer.push_back(cv::Vec3f(radarX, radarY, radarUpperZ));
       }
-      std::cout << "fails 4" << std::endl;
-      return buffer;
+    return buffer;
     }
-    else {return buffer;}
-    
-  }
+
+    void retrieve(std::vector<cv::Vec3f>& radarBuffer) {
+        while(!mutex.try_lock()){
+            if(!queue.empty() && newData) {
+                uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+                std::cout << now << std::endl;
+                radarBuffer.clear();
+                radarBuffer = std::move(queue.front());
+                queue.pop();
+                newData = {false};
+                radarBuffer.push_back(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN()));
+                mutex.unlock();
+                return;
+            }
+        }
+    };
+
+    void operator >> (std::vector<cv::Vec3f>& radarBuffer)
+    {
+        retrieve(radarBuffer);
+    };
 
   void fitToLidar(std::vector<cv::Vec3f> lidarPoints) {
     if (cycles > 189 && cycles < 210) {
@@ -364,7 +390,21 @@ class RadarDisplay {
     return y / static_cast<float>(cycles);
   }
 
-  void close() {}
+  void close() {
+  run = false;
+  if( threadQueueRead && threadQueueRead->joinable() ){
+      threadQueueRead->join();
+      threadQueueRead->~thread();
+      delete threadQueueRead;
+      threadQueueRead = nullptr;
+  }
+  if( threadQueueWrite && threadQueueWrite->joinable() ){
+    threadQueueWrite->join();
+    threadQueueWrite->~thread();
+    delete threadQueueWrite;
+    threadQueueWrite = nullptr;
+  }
+  }
 
   void error(const char* msg) {
     perror(msg);
