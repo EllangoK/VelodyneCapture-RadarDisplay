@@ -5,7 +5,6 @@
 #include <opencv2/viz.hpp>
 #include <opencv2/viz/widgets.hpp>
 
-// Include VelodyneCapture Header
 #include "VelodyneCapture.h"
 #include "RadarDisplay.h"
 
@@ -110,11 +109,11 @@ int main(int argc, char* argv[])
     // velodyne::HDL32ECapture capture( address, port );
 
     // Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../300cmTilt.pcap";
+    const std::string filename = "../" + std::string(argv[1]) + ".pcap";
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
 
-    int portno = 12342;
+    int portno = 12344;
     radar::RadarDisplay radar(portno, 24, 11, -8);
 
     if (!capture.isOpen()) {
@@ -136,7 +135,7 @@ int main(int argc, char* argv[])
     generateLidarQueue(&capture);
     bool firstRun = true;
     std::thread t1;
-    std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer;
+    std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer, lidarPointsInRange;
     int prevCycle = 0;
     while (!viewer.wasStopped() || !radar.isEmpty() || true) {
         if (radar.isQueueBuildOver()) {
@@ -155,15 +154,20 @@ int main(int argc, char* argv[])
         if (localRadarBuffer.size() != radarBuffer.size()) {
             localRadarBuffer = radarBuffer;
         }
-        if (lidarCycle != prevCycle) {
-            if (!radar.fitToLidar(localLaserBuffer, localRadarBuffer, lidarCycle)) {
+        /* if (lidarCycle != prevCycle || lidarCycle > 210) {
+            if (!radar.fitToLidar(laserBuffer, localRadarBuffer, lidarCycle)) {
                 lidarCycle--;
             }
             prevCycle = lidarCycle;
-        }
+        } */
         cv::Mat radarCloudMat = cv::Mat(static_cast<int>(localRadarBuffer.size()),
             1, CV_32FC3, &localRadarBuffer[0]);
         collection.addCloud(radarCloudMat, cv::viz::Color::raspberry());
+
+        /* slidarPointsInRange = radar.returnLidarPointsInRange();
+        cv::Mat lidarPointsInRangeMat = cv::Mat(static_cast<int>(lidarPointsInRange.size()),
+            1, CV_32FC3, &lidarPointsInRange[0]);
+        collection.addCloud(lidarPointsInRangeMat, cv::viz::Color::purple()); */
 
         collection.finalize();
         viewer.showWidget("Cloud", collection);
