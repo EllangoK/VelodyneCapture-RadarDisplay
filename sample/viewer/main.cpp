@@ -11,7 +11,6 @@
 #include <thread>
 #include <future>
 #include <unistd.h>
-#include <X11/Xlib.h>
 
 cv::Vec3f yaw(cv::Vec3f point, float a)
 {
@@ -56,11 +55,13 @@ void updateRadarBuffer(radar::RadarDisplay* radar)
         }
     }
 }
+std::mutex mutex;
 std::atomic_int lidarCycle = { 0 };
 std::queue<std::vector<cv::Vec3f> > laserBufferQueue;
 std::vector<cv::Vec3f> laserBuffer;
 void exposeLaserBuffer()
 {
+    mutex.lock();
     laserBuffer.clear();
     if (!laserBufferQueue.empty()) {
         laserBuffer = std::move(laserBufferQueue.front());
@@ -68,6 +69,7 @@ void exposeLaserBuffer()
         laserBufferQueue.pop();
         std::cout << "lidarCycle: " << lidarCycle << std::endl;
     }
+    mutex.unlock();
 }
 void generateLidarQueue(velodyne::VLP16Capture* capture)
 {
@@ -112,9 +114,8 @@ int main(int argc, char* argv[])
     const std::string filename = "../" + std::string(argv[1]) + ".pcap";
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
-
-    int portno = 12344;
-    radar::RadarDisplay radar(portno, 24, 11, -8);
+    int portno = 12345;
+    radar::RadarDisplay radar(portno, 24, -11, -8);
 
     if (!capture.isOpen()) {
         std::cerr << "Can't open VelodyneCapture." << std::endl;
@@ -122,7 +123,6 @@ int main(int argc, char* argv[])
     }
     // Create Viewer
     cv::viz::Viz3d viewer("Velodyne");
-
     // Register Keyboard Callback
     viewer.registerKeyboardCallback(
         [](const cv::viz::KeyboardEvent& event, void* cookie) {
@@ -135,64 +135,78 @@ int main(int argc, char* argv[])
     generateLidarQueue(&capture);
     bool firstRun = true;
     std::thread t1;
-    std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer, lidarPointsInRange;
+    std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer, lidarPointsInRange, firstObject, secondObject;
     int prevCycle = 0;
-    while (!viewer.wasStopped() || !radar.isEmpty() || true) {
-        if (radar.isQueueBuildOver()) {
+    while (!viewer.wasStopped() || true) {
+        if (radar.isQueueBuildOver() && firstRun) {
             timedFunction(exposeLaserBuffer, 100);
             t1 = std::thread(std::bind(updateRadarBuffer, &radar));
             radar.resetQueueBuild();
+            firstRun = false;
         }
+
         cv::viz::WCloudCollection collection;
-        if (localLaserBuffer.size() != laserBuffer.size()) {
-            localLaserBuffer = laserBuffer;
+        if (mutex.try_lock()) {
+            if (localLaserBuffer.size() != laserBuffer.size()) {
+                localLaserBuffer = laserBuffer;
+            }
+            mutex.unlock();
         }
+        mutex.lock();
+        if (localRadarBuffer.size() != radarBuffer.size()) {
+            localRadarBuffer = radarBuffer;
+        }
+        mutex.unlock();
         cv::Mat lidarCloudMat = cv::Mat(static_cast<int>(localLaserBuffer.size()),
             1, CV_32FC3, &localLaserBuffer[0]);
         collection.addCloud(lidarCloudMat, cv::viz::Color::white());
 
-        if (localRadarBuffer.size() != radarBuffer.size()) {
-            localRadarBuffer = radarBuffer;
-        }
         /* if (lidarCycle != prevCycle || lidarCycle > 210) {
             if (!radar.fitToLidar(laserBuffer, localRadarBuffer, lidarCycle)) {
                 lidarCycle--;
             }
             prevCycle = lidarCycle;
         } */
-        cv::Mat radarCloudMat = cv::Mat(static_cast<int>(localRadarBuffer.size()),
-            1, CV_32FC3, &localRadarBuffer[0]);
-        collection.addCloud(radarCloudMat, cv::viz::Color::raspberry());
 
-        /* slidarPointsInRange = radar.returnLidarPointsInRange();
+        /* if (lidarCycle != prevCycle) {
+            radar.fitToLidarY(localLaserBuffer, localRadarBuffer, lidarCycle);
+            prevCycle = lidarCycle;
+        }
+        firstObject = radar.returnFirstObject();
+        cv::Mat firstObjectMat = cv::Mat(static_cast<int>(firstObject.size()),
+            1, CV_32FC3, &firstObject[0]);
+        collection.addCloud(firstObjectMat, cv::viz::Color::purple());
+        secondObject = radar.returnSecondObject();
+        cv::Mat secondObjectMat = cv::Mat(static_cast<int>(secondObject.size()),
+            1, CV_32FC3, &secondObject[0]);
+        collection.addCloud(secondObjectMat, cv::viz::Color::orange()); */
+
+        /*if (lidarCycle != prevCycle || lidarCycle > 210) {
+            if (!isnanf(localRadarBuffer.front()[0])) {
+                radar.findPointsInRange(localLaserBuffer, 5.0, localRadarBuffer.front()[0]);
+                prevCycle = lidarCycle;
+            }
+        }
+        lidarPointsInRange = radar.returnLidarPointsInRange();
         cv::Mat lidarPointsInRangeMat = cv::Mat(static_cast<int>(lidarPointsInRange.size()),
             1, CV_32FC3, &lidarPointsInRange[0]);
-        collection.addCloud(lidarPointsInRangeMat, cv::viz::Color::purple()); */
+        collection.addCloud(lidarPointsInRangeMat, cv::viz::Color::yellow());
+        radar.clearLidarPointsInRange(); */
+
+        cv::Mat radarCloudMat = cv::Mat(static_cast<int>(localRadarBuffer.size()),
+            1, CV_32FC3, &localRadarBuffer[0]);
+        collection.addCloud(radarCloudMat, cv::viz::Color::orange_red());
 
         collection.finalize();
         viewer.showWidget("Cloud", collection);
         viewer.spinOnce();
+        usleep(20000);
     }
-
-    /* radar.fitToLidar(laserBuffer);
-
-std::vector<cv::Vec3f> selectedPoints = radar.returnLidarPointsInRange();
-cv::Mat selectedPointsMat = cv::Mat( static_cast<int>(selectedPoints.size() ),
-1, CV_32FC3, &selectedPoints[0] );
-ollection.addCloud(selectedPointsMat, cv::viz::Color::blue());
-
-std::vector<cv::Vec3f> obj = radar.returnFirstObject();
-std::vector<cv::Vec3f> obj2 = radar.returnSecondObject();
-cv::Mat objMat = cv::Mat( static_cast<int>(obj.size() ), 1, CV_32FC3, &obj[0]
-);
-cv::Mat obj2Mat = cv::Mat( static_cast<int>(obj2.size() ), 1, CV_32FC3,
-&obj2[0] );
-collection.addCloud(objMat, cv::viz::Color::green());
-collection.addCloud(obj2Mat, cv::viz::Color::purple()); */
 
     // Show Point Cloud Collection
     // Close All Viewers
     cv::viz::unregisterAllWindows();
     // radar.close();
+    t1.join();
     return 0;
 }

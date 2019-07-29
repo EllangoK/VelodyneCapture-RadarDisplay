@@ -255,7 +255,7 @@ public:
             return 0;
         }
         if (lidarCycles > 189 && lidarCycles < 210) {
-            findPointsInRange(lidarPoints, 5.0, X);
+            findPointsInCurbRange(lidarPoints, 5.0, X);
         }
         else if (lidarCycles == 210) {
             std::cout << "localGroundZ: " << findMinAvgZ(50) << std::endl;
@@ -291,7 +291,8 @@ public:
     {
         return (quant(lidarXs, 0.85) + quant(lidarXs, 0.15)) / 2.;
     }
-    void findPointsInRange(std::vector<cv::Vec3f>& lidarPoints,
+    void clearLidarPointsInRange() { lidarPointsInRange.clear(); }
+    void findPointsInCurbRange(std::vector<cv::Vec3f>& lidarPoints,
         float percentTolerance, float distance)
     {
         std::vector<float> lidarXs;
@@ -399,63 +400,82 @@ public:
             return 0;
         }
     }
-
-    /* void fitToLidarY(std::vector<cv::Vec3f> lidarPoints)
+    bool cycle210 = true;
+    bool cycle430 = true;
+    float firstObjectInitialY, secondObjectInitialY, secondObjectFinalY,
+        distanceTraveled;
+    bool fitToLidarY(std::vector<cv::Vec3f>& lidarPoints,
+        std::vector<cv::Vec3f>& radarPoints, int cycles)
     {
-        float firstObjectInitialY, secondObjectInitialY, secondObjectFinalY,
-            distanceTraveled;
+        if (isnanf(radarPoints.front()[0])) {
+            cycles--;
+            return 0;
+        }
         if ((cycles > 189 && cycles < 210) || (cycles > 389 && cycles < 410)) {
-            findPointsInRange(lidarPoints, 1.0, distanceTraveled);
+            findPointsInRange(lidarPoints, 40, radarPoints.front()[0]);
         }
         else if (cycles == 210) {
-            firstObjectInitialY = findFirstObjectY(1.0, -10); // known height in lidar scale
-            secondObjectInitialY = findSecondObjectY(1.0, 10); // known height in lidar scale
-            lidarPointsInRange.clear();
+            if (cycle210) {
+                firstObjectInitialY = findObjectYByHeight(lidarPointsInRange, 15, -35, firstObject, 0, 170, true);
+                secondObjectInitialY = findObjectYByHeight(lidarPointsInRange, 15, -20, secondObject, 1, 270, false);
+                lidarPointsInRange.clear();
+                cycle210 = false;
+            }
         }
         else if (cycles == 410) {
-            secondObjectFinalY = findSecondObjectY(1.0, 10);
-            offsetY = (secondObjectFinalY - secondObjectInitialY) - firstObjectInitialY;
-            std::cout << "offsetY" << offsetY << std::endl;
+            firstObject.clear();
+            secondObject.clear();
+            if (cycle430) {
+                secondObjectFinalY = findObjectYByHeight(lidarPointsInRange, 15, -20, secondObject, 1, 220, false);
+                offsetY = (secondObjectInitialY - secondObjectFinalY) - firstObjectInitialY;
+                std::cout << "offsetY: " << offsetY << " firstObjectInitialY: " << firstObjectInitialY << " secondObjectInitialY: " << secondObjectInitialY << " secondObjectFinalY: " << secondObjectFinalY << std::endl;
+                cycle430 = false;
+            }
         }
-        cycles++;
-        std::cout << cycles << std::endl;
+        return 1;
+    }
+    void findPointsInRange(std::vector<cv::Vec3f>& lidarPoints,
+        float percentTolerance, float distance)
+    {
+        for (int i = 0; i < lidarPoints.size(); i++) {
+            bool preFlag = isnanf(lidarPoints[i][0]) || isnanf(distance) || lidarPoints[i][0] < 0.0f;
+            if (!preFlag) {
+                if (isInPercentTolerance(distance, lidarPoints[i][0], percentTolerance)) {
+                    lidarPointsInRange.push_back(lidarPoints[i]);
+                }
+            }
+        }
     }
     std::vector<cv::Vec3f> returnFirstObject() { return firstObject; }
-    float findFirstObjectY(float percentTolerance, float height)
+    std::vector<cv::Vec3f> returnSecondObject() { return secondObject; }
+    float findObjectYByHeight(std::vector<cv::Vec3f>& lidarPoints, float percentTolerance, float height, std::vector<cv::Vec3f>& object, int limIndex, float lim, bool toggle)
     {
         float y = 0;
         int cycles = 0;
-        for (int i = 0; i < lidarPointsInRange.size(); i++) {
-            bool preFlag = isnanf(lidarPointsInRange[i][1]) || isnanf(radarX) || isnanf(radarUpperZ);
+        for (int i = 0; i < lidarPoints.size(); i++) {
+            bool preFlag = isnanf(lidarPoints[i][1]);
             if (!preFlag) {
-                if (isInPercentTolerance(height, lidarPointsInRange[i][1],
-                        percentTolerance)) {
-                    firstObject.push_back(lidarPointsInRange[i]);
-                    y += lidarPointsInRange[i][1];
-                    cycles++;
+                if (isInPercentTolerance(height, lidarPoints[i][2],
+                        percentTolerance)
+                    && lidarPoints[i][limIndex] < lim) {
+                    if (!toggle) {
+                        object.push_back(lidarPoints[i]);
+                        y += lidarPoints[i][1];
+                        cycles++;
+                    }
+                    else {
+                        if (lidarPoints[i][1] < 100) {
+                            object.push_back(lidarPoints[i]);
+                            y += lidarPoints[i][1];
+                            cycles++;
+                        }
+                    }
                 }
             }
         }
+        std::cout << "y: " << y << " cycles: " << cycles << std::endl;
         return y / static_cast<float>(cycles);
     }
-    std::vector<cv::Vec3f> returnSecondObject() { return secondObject; }
-    float findSecondObjectY(float percentTolerance, float height)
-    {
-        float y = 0;
-        int cycles = 0;
-        for (int i = 0; i < lidarPointsInRange.size(); i++) {
-            bool preFlag = isnanf(lidarPointsInRange[i][1]) || isnanf(radarX) || isnanf(radarUpperZ);
-            if (!preFlag) {
-                if (isInPercentTolerance(height, lidarPointsInRange[i][1],
-                        percentTolerance)) {
-                    secondObject.push_back(lidarPointsInRange[i]);
-                    y += lidarPointsInRange[i][1];
-                    cycles++;
-                }
-            }
-        }
-        return y / static_cast<float>(cycles);
-    } */
 
     void closeThread(std::thread* thread)
     {
