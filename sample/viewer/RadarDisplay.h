@@ -38,8 +38,8 @@ protected:
     socklen_t clilen;
     struct sockaddr_in serv_addr, cli_addr;
 
-    float offsetX, offsetY, offsetZ, lidarOffsetZ = -50.06731667;
-    float avgCurbHeight = 0, groundZ = -66.37250833, scaleZ = 1, scaleX = 0.964308;
+    float offsetX, offsetY, offsetZ, lidarOffsetZ = 0;
+    float avgCurbHeight = 0, groundZ = 0, scaleZ = 1, scaleX = 1;
     int cycles = 0;
     std::atomic_bool queueBuildFlag = { false };
     std::vector<cv::Vec3f> lidarPointsInRange, firstObject, secondObject;
@@ -175,7 +175,7 @@ public:
     {
         float radarX, radarY, radarUpperZ, radarLowerZ;
         std::vector<cv::Vec3f> buffer;
-        scaleZ = calculateScaleZ(distance);
+        scaleZ = 1;//calculateScaleZ(distance);
         radarX = (distance + offsetX) * scaleX;
         radarUpperZ = ((length / 2.) + offsetZ) * scaleZ + lidarOffsetZ;
         radarLowerZ = ((-length / 2.) + offsetZ) * scaleZ + lidarOffsetZ;
@@ -246,25 +246,24 @@ public:
     {
         float X, Y, upperZ, lowerZ, calcGroundZ, calcAvgCurbHeight, calcScaleZ,
             calcScaleX, calcLidarOffset;
-        X = radarPoints.front()[0];
+        X = radarPoints.front()[0] * scaleX;
         Y = radarPoints.front()[1];
-        lowerZ = radarPoints.front()[2];
-        upperZ = radarPoints[radarPoints.size() - 2][2];
+        lowerZ = radarPoints.front()[2] * scaleZ + lidarOffsetZ;
+        upperZ = radarPoints[radarPoints.size() - 2][2] * scaleZ + lidarOffsetZ;
         if (isnanf(X)) {
             lidarCycles--;
             return 0;
         }
-        if (lidarCycles > 189 && lidarCycles < 210) {
+        if (lidarCycles > 179 && lidarCycles < 200) {
             findPointsInCurbRange(lidarPoints, 5.0, X);
         }
-        else if (lidarCycles == 210) {
-            std::cout << "localGroundZ: " << findMinAvgZ(50) << std::endl;
+        else if (lidarCycles == 200) {
             // calcGroundZ = findGlobalMinAvgZ(lidarPoints, 50, findMinAvgZ(50));
             calcGroundZ = findMinAvgZ(50);
             calcAvgCurbHeight = findMaxAvgZ(200, calcGroundZ);
             float avgMinX = findMinAvgX(200);
             calcScaleZ = (calcAvgCurbHeight - calcGroundZ) / (upperZ - lowerZ);
-            calcScaleX = avgMinX / X;
+            calcScaleX = X / avgMinX;
             calcLidarOffset = calcGroundZ - calcScaleZ * lowerZ;
             std::cout << "scaleZ: " << calcScaleZ << " scaleX: " << calcScaleX
                       << " avgMinX: " << avgMinX << std::endl;
@@ -277,8 +276,13 @@ public:
             scaleX = calcScaleX;
             lidarOffsetZ = calcLidarOffset;
         }
-        else if (lidarCycles > 210) {
+        else if (lidarCycles > 200) {
             generatePointVec(radarPoints);
+        }
+        if (lidarCycles == 310) {
+            std::cout << "scaleZ: " << scaleZ << " scaleX: " << scaleX << std::endl;
+            std::cout << "radarUpperZ: " << upperZ << " radarLowerZ: " << lowerZ
+                      << " radarX: " << X << std::endl;
         }
         return 1;
     }
@@ -289,7 +293,7 @@ public:
     }
     float avgCurbX(std::vector<float> lidarXs)
     {
-        return (quant(lidarXs, 0.85) + quant(lidarXs, 0.15)) / 2.;
+        return (quant(lidarXs, 0.75) + quant(lidarXs, 0.25)) / 2.;
     }
     void clearLidarPointsInRange() { lidarPointsInRange.clear(); }
     void findPointsInCurbRange(std::vector<cv::Vec3f>& lidarPoints,

@@ -7,6 +7,7 @@
 
 #include "VelodyneCapture.h"
 #include "RadarDisplay.h"
+#include "RadarPacket.h"
 
 #include <thread>
 #include <future>
@@ -114,8 +115,8 @@ int main(int argc, char* argv[])
     const std::string filename = "../" + std::string(argv[1]) + ".pcap";
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
-    int portno = 12345;
-    radar::RadarDisplay radar(portno, 24, -11, -8);
+    int portno = atoi(argv[2]);
+    radar::RadarDisplay radar(portno, 30, -11, -8);
 
     if (!capture.isOpen()) {
         std::cerr << "Can't open VelodyneCapture." << std::endl;
@@ -161,12 +162,12 @@ int main(int argc, char* argv[])
             1, CV_32FC3, &localLaserBuffer[0]);
         collection.addCloud(lidarCloudMat, cv::viz::Color::white());
 
-        /* if (lidarCycle != prevCycle || lidarCycle > 210) {
+        if (lidarCycle != prevCycle || lidarCycle > 210) {
             if (!radar.fitToLidar(laserBuffer, localRadarBuffer, lidarCycle)) {
                 lidarCycle--;
             }
             prevCycle = lidarCycle;
-        } */
+        }
 
         /* if (lidarCycle != prevCycle) {
             radar.fitToLidarY(localLaserBuffer, localRadarBuffer, lidarCycle);
@@ -181,17 +182,17 @@ int main(int argc, char* argv[])
             1, CV_32FC3, &secondObject[0]);
         collection.addCloud(secondObjectMat, cv::viz::Color::orange()); */
 
-        /*if (lidarCycle != prevCycle || lidarCycle > 210) {
+        /* if (lidarCycle != prevCycle || lidarCycle > 210) {
             if (!isnanf(localRadarBuffer.front()[0])) {
                 radar.findPointsInRange(localLaserBuffer, 5.0, localRadarBuffer.front()[0]);
                 prevCycle = lidarCycle;
             }
-        }
-        lidarPointsInRange = radar.returnLidarPointsInRange();
-        cv::Mat lidarPointsInRangeMat = cv::Mat(static_cast<int>(lidarPointsInRange.size()),
-            1, CV_32FC3, &lidarPointsInRange[0]);
-        collection.addCloud(lidarPointsInRangeMat, cv::viz::Color::yellow());
-        radar.clearLidarPointsInRange(); */
+        } */
+        //lidarPointsInRange = radar.returnLidarPointsInRange();
+        //cv::Mat lidarPointsInRangeMat = cv::Mat(static_cast<int>(lidarPointsInRange.size()),
+        //  1, CV_32FC3, &lidarPointsInRange[0]);
+        //collection.addCloud(lidarPointsInRangeMat, cv::viz::Color::blue());
+        //radar.clearLidarPointsInRange();
 
         cv::Mat radarCloudMat = cv::Mat(static_cast<int>(localRadarBuffer.size()),
             1, CV_32FC3, &localRadarBuffer[0]);
@@ -206,7 +207,7 @@ int main(int argc, char* argv[])
     // Show Point Cloud Collection
     // Close All Viewers
     cv::viz::unregisterAllWindows();
-    // radar.close();
+    radar.close();
     t1.join();
     return 0;
 }
