@@ -7,7 +7,7 @@ set( CMAKE_CXX_EXTENSIONS OFF )
 
 # Create Project
 project( sample )
-add_executable( viewer VelodyneCapture.h RadarDisplay.h RadarPacket.h main.cpp )
+add_executable( viewer VelodyneCapture.h RadarDisplay.h RadarControl.h main.cpp )
 
 # Set StartUp Project
 set_property( DIRECTORY PROPERTY VS_STARTUP_PROJECT "viewer" )

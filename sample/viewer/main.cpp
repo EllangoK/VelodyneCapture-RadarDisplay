@@ -7,7 +7,7 @@
 
 #include "VelodyneCapture.h"
 #include "RadarDisplay.h"
-#include "RadarPacket.h"
+#include "RadarControl.h"
 
 #include <thread>
 #include <future>

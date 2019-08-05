@@ -2,6 +2,13 @@
 #include <string>
 
 #include <chrono>
+#include <atomic>
+#include <mutex>
+
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include <opencv2/opencv.hpp>
 
@@ -97,7 +104,89 @@ class RadarPacket {
   }
 
   float calculateScaleZ(float distance, bool enabled = true) {
-    return enabled ? (74.5 * powf(distance, -1.12)) : 0;
+    return enabled ? (74.5 * powf(distance, -1.12)) : 1;
   }
+};
+
+class RadarServer {
+ private:
+  int sockfd, newsockfd, servlen, n;
+  socklen_t clilen;
+  struct sockaddr_un cli_addr, serv_addr;
+  char buf[29];
+  std::string socketPath;
+
+  std::atomic_bool socketRun = {true};
+
+  std::mutex mutex;
+  std::queue<radar::RadarPacket> queue;
+  std::atomic_int queueSize = {0};
+
+  std::vector<float> params;
+
+ public:
+  RadarServer(std::string socketPath, std::vector<float> params) {
+    this->socketPath = socketPath;
+    this->params = params;
+    createServer();
+  }
+
+  void createServer() {
+    sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+      error("Opening Socket Error");
+    }
+    bzero((char*)&serv_addr, sizeof(serv_addr));
+    serv_addr.sun_family = AF_UNIX;
+    strcpy(serv_addr.sun_path, socketPath.c_str());
+    if (bind(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+      error("Binding Error");
+    }
+    listen(sockfd, 4);
+    clilen = sizeof(cli_addr);
+    newsockfd = accept(sockfd, (struct sockaddr*)&cli_addr, &clilen);
+    if (newsockfd < 0) {
+      error("Connection Accept Error");
+    }
+    bzero(buf, 29);
+  }
+  void readSocket() {
+    switch (read(newsockfd, buf, 29)) {
+      case -1:
+        error("Socket Read Error");
+      case 0:
+        socketRun = {false};
+      case 29:
+        buf[29] = '\0';
+        std::string msg(buf);
+        if (msg == "99999999999999999999999999999") {
+          socketRun = {false};
+          return;
+        }
+        if (msg.substr(0, 5) == "Start") {
+          std::vector<std::string> packetPayload;
+          long long packetStart, packetStop;
+          packetStart = std::stoll(msg.substr(6, 16));
+          int packetLen = std::stoi(msg.substr(26, 3));
+          for (int i = 0; i < packetLen; i++) {
+            read(newsockfd, buf, 29);
+            buf[29] = '\0';
+            packetPayload.push_back(std::string(buf));
+          }
+          read(newsockfd, buf, 29);
+          packetStop = std::stoll(msg.substr(12, 16));
+          RadarPacket data =
+              RadarPacket(packetStart, packetStop, packetPayload);
+          data.setCalibrationParams(params);
+          while (true) {
+            if (mutex.try_lock()) {
+              queue.push(data);
+              mutex.unlock();
+            }
+          }
+        }
+    }
+  }
+  void error(const char*);
 };
 }
