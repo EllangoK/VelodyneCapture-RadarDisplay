@@ -150,7 +150,13 @@ class RadarServer {
     closeSocket();
     closeThread(closeSocketThread);
   }
-  void error(const char*);
+
+  void error(const char* msg) {
+    perror(msg);
+    exit(0);
+  }
+  bool isEmpty() { return queue.empty(); }
+  bool isRun() { return socketRun; }
 
   void createServer() {
     sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -257,6 +263,238 @@ class RadarServer {
       delete thread;
       thread = nullptr;
     }
+  }
+};
+
+class RadarParamGen {
+ private:
+  float offsetX, offsetY, offsetZ, lidarOffsetZ = 0;
+  float avgCurbHeight = 0, groundZ = 0, scaleZ = 1, scaleX = 1;
+  float firstObjectInitialY, secondObjectInitialY, secondObjectFinalY,
+      distanceTraveled;
+  std::vector<cv::Vec3f> lidarPointsInRange, firstObject, secondObject;
+
+ public:
+  RadarParamGen() {}
+
+  template <typename T1, typename T2>
+  typename T1::value_type quant(const T1& x, T2 q) {
+    assert(q >= 0.0 && q <= 1.0);
+
+    const auto n = x.size();
+    const auto id = (n - 1) * q;
+    const auto lo = floor(id);
+    const auto hi = ceil(id);
+    const auto qs = x[lo];
+    const auto h = (id - lo);
+
+    return (1.0 - h) * qs + h * x[hi];
+  }
+  bool isInPercentTolerance(float measured, float actual,
+                            float percentTolerance) {
+    return (fabs((measured - actual) / actual) * 100. <= percentTolerance);
+  }
+
+  void fitToLidar(std::vector<cv::Vec3f>& lidarPoints,
+                  std::vector<cv::Vec3f>& radarPoints, int lidarCycles) {
+    if (isnanf(radarPoints.front()[0])) {
+      return;
+    }
+    float X, Y, upperZ, lowerZ, calcGroundZ, calcAvgCurbHeight, calcScaleZ,
+        calcScaleX, calcLidarOffset;
+    X = radarPoints.front()[0] * scaleX;
+    Y = radarPoints.front()[1];
+    lowerZ = radarPoints.front()[2] * scaleZ + lidarOffsetZ;
+    upperZ = radarPoints[radarPoints.size() - 2][2] * scaleZ + lidarOffsetZ;
+    if (lidarCycles > 179 && lidarCycles < 200) {
+      findPointsInCurbRange(lidarPoints, 5.0, X);
+    } else if (lidarCycles == 200) {
+      calcGroundZ = findMinAvgZ(50);
+      calcAvgCurbHeight = findMaxAvgZ(200, calcGroundZ);
+      float avgMinX = findMinAvgX(200);
+      calcScaleZ = (calcAvgCurbHeight - calcGroundZ) / (upperZ - lowerZ);
+      calcScaleX = X / avgMinX;
+      calcLidarOffset = calcGroundZ - calcScaleZ * lowerZ;
+      std::cout << "scaleZ: " << calcScaleZ << " scaleX: " << calcScaleX
+                << " avgMinX: " << avgMinX << std::endl;
+      std::cout << "radarUpperZ: " << upperZ << " radarLowerZ: " << lowerZ
+                << " radarX: " << X << std::endl;
+      std::cout << "groundZ: " << calcGroundZ
+                << " curbHeight: " << calcAvgCurbHeight
+                << " lidarOffsetZ: " << calcLidarOffset << std::endl;
+      scaleZ = calcScaleZ;
+      scaleX = calcScaleX;
+      lidarOffsetZ = calcLidarOffset;
+    }
+    if (lidarCycles == 310) {
+      std::cout << "scaleZ: " << scaleZ << " scaleX: " << scaleX << std::endl;
+      std::cout << "radarUpperZ: " << upperZ << " radarLowerZ: " << lowerZ
+                << " radarX: " << X << std::endl;
+    }
+  }
+
+  std::vector<cv::Vec3f> returnLidarPointsInRange() {
+    return lidarPointsInRange;
+  }
+  void clearLidarPointsInRange() { lidarPointsInRange.clear(); }
+
+  void findPointsInRange(std::vector<cv::Vec3f>& lidarPoints,
+                         float percentTolerance, float distance) {
+    for (int i = 0; i < lidarPoints.size(); i++) {
+      if (!isnanf(lidarPoints[i][0]) &&
+          isInPercentTolerance(distance, lidarPoints[i][0], percentTolerance)) {
+        lidarPointsInRange.push_back(lidarPoints[i]);
+      }
+    }
+  }
+  float avgCurbX(std::vector<float> lidarXs) {
+    return (quant(lidarXs, 0.75) + quant(lidarXs, 0.25)) / 2.;
+  }
+  void findPointsInCurbRange(std::vector<cv::Vec3f>& lidarPoints,
+                             float percentTolerance, float distance) {
+    std::vector<float> lidarXs;
+    for (int i = 0; i < lidarPoints.size(); i++) {
+      if (!isnanf(lidarPoints[i][0]) &&
+          isInPercentTolerance(distance, lidarPoints[i][0], percentTolerance)) {
+        lidarXs.push_back(lidarPoints[i][0]);
+      }
+    }
+    float curbX = avgCurbX(lidarXs);
+    for (int i = 0; i < lidarPoints.size(); i++) {
+      if (!isnanf(lidarPoints[i][0]) &&
+          isInPercentTolerance(curbX, lidarPoints[i][0], 1.0)) {
+        lidarPointsInRange.push_back(lidarPoints[i]);
+      }
+    }
+  }
+
+  float findGlobalMinAvgZ(std::vector<cv::Vec3f>& lidarPoints, int numsamples,
+                          float localGroundZ) {
+    int size = 0;
+    float globalMin = 0;
+    for (int i = 0; i < lidarPoints.size(); i++) {
+      if (!!isnanf(lidarPoints[i][0]) && (lidarPoints[i][2] <= localGroundZ)) {
+        globalMin += lidarPoints[i][2];
+        size++;
+      }
+    }
+    return globalMin / static_cast<float>(size);
+  }
+  float findMinAvgZ(int numSamples) {
+    std::vector<float> minZVec;
+    int count = 0;
+    for (int i = 0; i < lidarPointsInRange.size(); i++) {
+      minZVec.push_back(lidarPointsInRange[i][2]);
+      if (lidarPointsInRange[i][2] < -50.) {
+        firstObject.push_back(lidarPointsInRange[i]);
+      }
+    }
+    float minZ = 0.0f;
+    int minZSize = minZVec.size();
+    int size = std::min(numSamples, minZSize);
+    for (int i = 0; i < size; i++) {
+      int minIndex = std::distance(
+          minZVec.begin(), std::min_element(minZVec.begin(), minZVec.end()));
+      std::cout << "minZ: " << minZVec[minIndex] << std::endl;
+      minZ += minZVec[minIndex];
+      minZVec.erase(minZVec.begin() + minIndex);
+    }
+    return (minZ / static_cast<float>(size));
+  }
+  float findMaxAvgZ(int numSamples, float ground) {
+    std::vector<float> maxZVec;
+    int count = 0;
+    for (int i = 0; i < lidarPointsInRange.size(); i++) {
+      if ((lidarPointsInRange[i][2] <= (ground + 40)) &&
+          (lidarPointsInRange[i][2] >= ground)) {
+        maxZVec.push_back(lidarPointsInRange[i][2]);
+        secondObject.push_back(lidarPointsInRange[i]);
+      }
+    }
+    float maxZ = 0.0f;
+    int maxZVecSize = maxZVec.size();
+    int size = std::min(numSamples, maxZVecSize);
+    for (int i = 0; i < size; i++) {
+      int maxIndex = std::distance(
+          maxZVec.begin(), std::max_element(maxZVec.begin(), maxZVec.end()));
+      maxZ += maxZVec[maxIndex];
+      maxZVec.erase(maxZVec.begin() + maxIndex);
+    }
+    return (maxZ / static_cast<float>(size));
+  }
+  float findMinAvgX(int numSamples) {
+    std::vector<float> minXVec;
+    int count = 0;
+    for (int i = 0; i < lidarPointsInRange.size(); i++) {
+      minXVec.push_back(lidarPointsInRange[i][0]);
+    }
+    float minX = 0.0f;
+    int minXSize = minXVec.size();
+    int size = std::min(numSamples, minXSize);
+    for (int i = 0; i < size; i++) {
+      int minIndex = std::distance(
+          minXVec.begin(), std::min_element(minXVec.begin(), minXVec.end()));
+      minX += minXVec[minIndex];
+      minXVec.erase(minXVec.begin() + minIndex);
+    }
+    return (minX / static_cast<float>(size));
+  }
+
+  void fitToLidarY(std::vector<cv::Vec3f>& lidarPoints,
+                   std::vector<cv::Vec3f>& radarPoints, int cycles) {
+    if (isnanf(radarPoints.front()[0])) {
+      return;
+    }
+    if ((cycles > 189 && cycles < 210) || (cycles > 389 && cycles < 410)) {
+      findPointsInRange(lidarPoints, 40, radarPoints.front()[0]);
+    } else if (cycles == 210) {
+      firstObjectInitialY = findObjectYByHeight(lidarPointsInRange, 15, -35,
+                                                firstObject, 0, 170, true);
+      secondObjectInitialY = findObjectYByHeight(lidarPointsInRange, 15, -20,
+                                                 secondObject, 1, 270, false);
+      lidarPointsInRange.clear();
+    } else if (cycles == 410) {
+      firstObject.clear();
+      secondObject.clear();
+      secondObjectFinalY = findObjectYByHeight(lidarPointsInRange, 15, -20,
+                                               secondObject, 1, 220, false);
+      offsetY =
+          (secondObjectInitialY - secondObjectFinalY) - firstObjectInitialY;
+      std::cout << "offsetY: " << offsetY
+                << " firstObjectInitialY: " << firstObjectInitialY
+                << " secondObjectInitialY: " << secondObjectInitialY
+                << " secondObjectFinalY: " << secondObjectFinalY << std::endl;
+    }
+  }
+
+  std::vector<cv::Vec3f> returnFirstObject() { return firstObject; }
+  std::vector<cv::Vec3f> returnSecondObject() { return secondObject; }
+  float findObjectYByHeight(std::vector<cv::Vec3f>& lidarPoints,
+                            float percentTolerance, float height,
+                            std::vector<cv::Vec3f>& object, int limIndex,
+                            float lim, bool toggle) {
+    float y = 0;
+    int cycles = 0;
+    for (int i = 0; i < lidarPoints.size(); i++) {
+      if (!isnanf(lidarPoints[i][1])) {
+        if (isInPercentTolerance(height, lidarPoints[i][2], percentTolerance) &&
+            lidarPoints[i][limIndex] < lim) {
+          if (!toggle) {
+            object.push_back(lidarPoints[i]);
+            y += lidarPoints[i][1];
+            cycles++;
+          } else {
+            if (lidarPoints[i][1] < 100) {
+              object.push_back(lidarPoints[i]);
+              y += lidarPoints[i][1];
+              cycles++;
+            }
+          }
+        }
+      }
+    }
+    std::cout << "y: " << y << " cycles: " << cycles << std::endl;
+    return y / static_cast<float>(cycles);
   }
 };
 }
