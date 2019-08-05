@@ -28,6 +28,7 @@ class RadarPacket {
               std::vector<std::string>& socketData) {
     this->timeStartSend = timeStartSend;
     this->timeReceived = timeReceived;
+    extractData(socketData);
   }
   RadarPacket() {
     boundary.push_back(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
@@ -49,7 +50,7 @@ class RadarPacket {
     return params;
   }
 
-  std::vector<float> extractData(std::vector<std::string>& socketData) {
+  std::vector<float> extractData(std::vector<std::string> socketData) {
     for (std::string data : socketData) {
       lengthVec.push_back((float)atof(data.substr(0, 14).c_str()) * 100.);
       distanceVec.push_back((float)atof(data.substr(15, 29).c_str()) * 100.);
@@ -68,9 +69,9 @@ class RadarPacket {
     float scaleZ = calculateScaleZ(distance);
     x = (distance + offsetX) * scaleX;
     y = 0.0 + offsetY;
-    zLower = (length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
-    zUpper = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
-    for (int i = ceil(zLower); i <= floor(zUpper); i += 2) {
+    zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
+    zUpper = (length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
+    for (int i = ceil(zLower); i <= floor(zUpper); i += 3) {
       boundary.push_back(cv::Vec3f(x, y, i));
     }
     return boundary;
@@ -145,6 +146,7 @@ class RadarServer {
     this->socketPath = socketPath;
     this->params = params;
     createServer();
+    threadSocket();
   }
   ~RadarServer() {
     closeSocket();
@@ -157,6 +159,7 @@ class RadarServer {
   }
   bool isEmpty() { return queue.empty(); }
   bool isRun() { return socketRun; }
+  int getQueueSize() { return queueSize; }
 
   void createServer() {
     sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -186,7 +189,7 @@ class RadarServer {
   }
   void threadSocket() {
     auto funcReadSocket = std::bind(&RadarServer::readSocket, this);
-    unsigned int updateTime = 20;
+    unsigned int updateTime = 1;
     socketThread = new std::thread([funcReadSocket, updateTime]() {
       while (true) {
         auto x = std::chrono::steady_clock::now() +
@@ -195,49 +198,59 @@ class RadarServer {
         std::this_thread::sleep_until(x);
       }
     });
+    updateTime = 2;
     auto funcCloseSocket = std::bind(&RadarServer::closeSocket, this);
-    socketThread = new std::thread([funcReadSocket, updateTime]() {
+    closeSocketThread = new std::thread([funcCloseSocket, updateTime]() {
       while (true) {
         auto x = std::chrono::steady_clock::now() +
                  std::chrono::milliseconds(updateTime);
-        funcReadSocket();
+        funcCloseSocket();
         std::this_thread::sleep_until(x);
       }
     });
   }
   void readSocket() {
+    if (!socketRun) {
+      return;
+    }
     switch (read(newsockfd, buf, 29)) {
       case -1:
         error("Socket Read Error");
       case 0:
-        socketRun = {false};
+        return;
       case 29:
         buf[29] = '\0';
         std::string msg(buf);
-        if (msg == "99999999999999999999999999999") {
+        if (msg.substr(0, 13) == "ClientClosed:") {
           socketRun = {false};
           return;
         }
         if (msg.substr(0, 5) == "Start") {
           std::vector<std::string> packetPayload;
           long long packetStart, packetStop;
-          packetStart = std::stoll(msg.substr(6, 16));
           int packetLen = std::stoi(msg.substr(26, 3));
-          for (int i = 0; i < packetLen; i++) {
+          RadarPacket data;
+          if (packetLen == 0) {
+            data = RadarPacket();
             read(newsockfd, buf, 29);
-            buf[29] = '\0';
-            packetPayload.push_back(std::string(buf));
+          } else {
+            packetStart = std::stoll(msg.substr(6, 16));
+            for (int i = 0; i < packetLen; i++) {
+              read(newsockfd, buf, 29);
+              buf[29] = '\0';
+              packetPayload.push_back(std::string(buf));
+            }
+            read(newsockfd, buf, 29);
+            packetStop = std::stoll(msg.substr(12, 16));
+            data = RadarPacket(packetStart, packetStop, packetPayload);
           }
-          read(newsockfd, buf, 29);
-          packetStop = std::stoll(msg.substr(12, 16));
-          RadarPacket data =
-              RadarPacket(packetStart, packetStop, packetPayload);
           data.setCalibrationParams(params);
           while (true) {
             if (mutex.try_lock()) {
               queue.push(data);
               queueSize += 1;
               mutex.unlock();
+              break;
             }
           }
         }
@@ -251,6 +264,7 @@ class RadarServer {
         queue.pop();
         queueSize -= 1;
         mutex.unlock();
+        break;
       }
     }
   };
