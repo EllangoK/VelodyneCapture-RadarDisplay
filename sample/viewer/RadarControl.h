@@ -1,9 +1,10 @@
 #include <vector>
 #include <string>
 
-#include <chrono>
-#include <atomic>
+#include <thread>
 #include <mutex>
+#include <atomic>
+#include <chrono>
 
 #include <unistd.h>
 #include <sys/types.h>
@@ -18,7 +19,6 @@ class RadarPacket {
   long long timeStartSend, timeReceived, timeProcessed;  // microseconds
   std::vector<float> lengthVec;
   std::vector<float> distanceVec;
-  int boundaryIndex;
   std::vector<cv::Vec3f> boundary;
   float scaleX;
   float offsetX, offsetY, offsetZ, lidarOffsetZ;
@@ -34,6 +34,7 @@ class RadarPacket {
                                  std::numeric_limits<float>::quiet_NaN(),
                                  std::numeric_limits<float>::quiet_NaN()));
     lengthVec.push_back(std::numeric_limits<float>::quiet_NaN());
+    distanceVec.push_back(std::numeric_limits<float>::quiet_NaN());
   }
   void setCalibrationParams(std::vector<float>& params) {
     scaleX = params[0];
@@ -59,7 +60,8 @@ class RadarPacket {
   std::vector<float> getLengthVec() { return lengthVec; }
   std::vector<cv::Vec3f> getBoundary() { return boundary; }
 
-  std::vector<cv::Vec3f> generatePointVec() {
+  std::vector<cv::Vec3f> generatePointVec(int boundaryIndex,
+                                          std::vector<cv::Vec3f>& boundary) {
     float x, y, zLower, zUpper;
     float length = lengthVec[boundaryIndex];
     float distance = distanceVec[boundaryIndex];
@@ -102,6 +104,19 @@ class RadarPacket {
     }
     return radarPointCloud;
   }
+  std::vector<cv::Vec3f> generateAllPointVec() {
+    std::vector<cv::Vec3f> allBoundaries;
+    if (lengthVec.size() == 1) {
+      allBoundaries.push_back(
+          cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
+                    std::numeric_limits<float>::quiet_NaN(),
+                    std::numeric_limits<float>::quiet_NaN()));
+    }
+    for (int i = 0; i < lengthVec.size() - 1; i++) {
+      generatePointVec(i, allBoundaries);
+    }
+    return allBoundaries;
+  }
 
   float calculateScaleZ(float distance, bool enabled = true) {
     return enabled ? (74.5 * powf(distance, -1.12)) : 1;
@@ -116,9 +131,10 @@ class RadarServer {
   char buf[29];
   std::string socketPath;
 
-  std::atomic_bool socketRun = {true};
-
   std::mutex mutex;
+  std::thread* socketThread = nullptr;
+  std::thread* closeSocketThread = nullptr;
+  std::atomic_bool socketRun = {true};
   std::queue<radar::RadarPacket> queue;
   std::atomic_int queueSize = {0};
 
@@ -130,6 +146,11 @@ class RadarServer {
     this->params = params;
     createServer();
   }
+  ~RadarServer() {
+    closeSocket();
+    closeThread(closeSocketThread);
+  }
+  void error(const char*);
 
   void createServer() {
     sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -149,6 +170,34 @@ class RadarServer {
       error("Connection Accept Error");
     }
     bzero(buf, 29);
+  }
+  void closeSocket() {
+    if (!socketRun) {
+      closeThread(socketThread);
+      close(newsockfd);
+      close(sockfd);
+    }
+  }
+  void threadSocket() {
+    auto funcReadSocket = std::bind(&RadarServer::readSocket, this);
+    unsigned int updateTime = 20;
+    socketThread = new std::thread([funcReadSocket, updateTime]() {
+      while (true) {
+        auto x = std::chrono::steady_clock::now() +
+                 std::chrono::milliseconds(updateTime);
+        funcReadSocket();
+        std::this_thread::sleep_until(x);
+      }
+    });
+    auto funcCloseSocket = std::bind(&RadarServer::closeSocket, this);
+    socketThread = new std::thread([funcReadSocket, updateTime]() {
+      while (true) {
+        auto x = std::chrono::steady_clock::now() +
+                 std::chrono::milliseconds(updateTime);
+        funcReadSocket();
+        std::this_thread::sleep_until(x);
+      }
+    });
   }
   void readSocket() {
     switch (read(newsockfd, buf, 29)) {
@@ -181,12 +230,33 @@ class RadarServer {
           while (true) {
             if (mutex.try_lock()) {
               queue.push(data);
+              queueSize += 1;
               mutex.unlock();
             }
           }
         }
     }
   }
-  void error(const char*);
+
+  void retrieve(radar::RadarPacket& packet) {
+    while (true) {
+      if (mutex.try_lock() && !queue.empty()) {
+        packet = queue.front();
+        queue.pop();
+        queueSize -= 1;
+        mutex.unlock();
+      }
+    }
+  };
+  void operator>>(radar::RadarPacket& packet) { return retrieve(packet); };
+
+  void closeThread(std::thread* thread) {
+    if (thread && thread->joinable()) {
+      thread->join();
+      thread->~thread();
+      delete thread;
+      thread = nullptr;
+    }
+  }
 };
 }
