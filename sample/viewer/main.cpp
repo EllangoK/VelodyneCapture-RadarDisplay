@@ -46,65 +46,63 @@ void timedFunction(std::function<void(void)> func, unsigned int interval)
     }).detach();
 }
 std::mutex mutex;
+std::vector<float> params = { 1.037013, -50.06731667, 30, -11, -8 };
 
-std::atomic_int radarCycle = { 0 };
 std::queue<std::vector<cv::Vec3f> > radarBufferQueue;
 std::vector<cv::Vec3f> radarBuffer;
-void exposeRadarBuffer()
+
+std::queue<std::vector<cv::Vec3f> > radarBufferAllQueue;
+std::vector<cv::Vec3f> radarBufferAll;
+void exposeRadarBuffer(bool all)
 {
     while (true) {
         if (mutex.try_lock()) {
             radarBuffer.clear();
+            radarBufferAll.clear();
             if (!radarBufferQueue.empty()) {
                 radarBuffer = std::move(radarBufferQueue.front());
-                radarCycle++;
                 radarBufferQueue.pop();
-//                std::cout << "radarCycle: " << radarCycle << std::endl;
+                if (all && !radarBufferAllQueue.empty()) {
+                    //radarBufferAll = std::move(radarBufferAllQueue.front());
+                    //radarBufferAllQueue.pop();
+                }
             }
             mutex.unlock();
             break;
         }
     }
 }
-radar::RadarPacket prev;
-radar::RadarPacket prevPrev;
-void generateRadarQueue(radar::RadarServer* radar)
+std::deque<radar::RadarPacket> prev;
+void generateRadarQueue(radar::RadarServer* radar, bool all)
 {
-    bool first = true;
-    bool second = false;
     int cycles = 0;
     while (!radar->isEmpty()) {
-        cycles++;
+        std::vector<cv::Vec3f> temp;
         radar::RadarPacket data;
         *radar >> data;
-        std::vector<cv::Vec3f> temp;
-        if (first) {
-            radarBufferQueue.push(data.generatePointVec(data.getDistanceVec().size()));
-            prev = data;
-            first = false;
-            second = true;
-        } else if (second) {
-            radarBufferQueue.push(data.generatePointVec(data.getDistanceVec().size()));
-            prevPrev = prev;
-            prev = data;
-            second = false;
-        } else {
-            int byPrev, byPrevPrev;
-            byPrev = data.findBoundaryIndex(prev, 50);
-            byPrevPrev = data.findBoundaryIndex(prevPrev, 50);
-            if (data.getDistanceVec()[byPrev] == data.getDistanceVec()[byPrevPrev]) {
-                radarBufferQueue.push(data.generatePointVec(byPrev));
-            } else if (data.getDistanceVec()[byPrev] < data.getDistanceVec()[byPrevPrev]) {
-                radarBufferQueue.push(data.generatePointVec(byPrev));
-            } else if (data.getDistanceVec()[byPrev] > data.getDistanceVec()[byPrevPrev]) {
-                radarBufferQueue.push(data.generatePointVec(byPrevPrev));
-            }
-            prevPrev = prev;
-            prev = data;
+        temp.clear();
+        if (all) {
+            radarBufferAllQueue.push(data.generateAllPointVec());
         }
+        if (cycles < 5) {
+            std::cout << "temp1" << std::endl;
+            temp = data.generatePointVec(data.getDistanceVec().size());
+            std::cout << "temp2" << std::endl;
+            radarBufferQueue.push(temp);
+            prev.push_back(data);
+        }
+        else {
+            std::cout << "temp3" << std::endl;
+            temp = data.findBoundary(prev, 20.0);
+            std::cout << "temp4" << std::endl;
+            radarBufferQueue.push(temp);
+            prev.push_back(data);
+            prev.pop_front();
+        }
+        cycles++;
     }
 }
-std::atomic_int lidarCycle = { 0 };
+
 std::queue<std::vector<cv::Vec3f> > laserBufferQueue;
 std::vector<cv::Vec3f> laserBuffer;
 void exposeLaserBuffer()
@@ -114,9 +112,7 @@ void exposeLaserBuffer()
             laserBuffer.clear();
             if (!laserBufferQueue.empty()) {
                 laserBuffer = std::move(laserBufferQueue.front());
-                lidarCycle++;
                 laserBufferQueue.pop();
-//                std::cout << "lidarCycle: " << lidarCycle << std::endl;
             }
             mutex.unlock();
             break;
@@ -161,13 +157,12 @@ int main(int argc, char* argv[])
     // const unsigned short port = 2368;
     // velodyne::VLP16Capture capture( address, port );
     // velodyne::HDL32ECapture capture( address, port );
-
+    std::system("rm -rf /tmp/radarPacket");
     // Open VelodyneCapture that retrieve from PCAP
     const std::string filename = "../" + std::string(argv[1]) + ".pcap";
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
 
-    std::vector<float> params = { 1.037013, -50.06731667, 30, -11, -8 };
     std::string port = "/tmp/radarPacket";
     radar::RadarServer radarServer(port, params);
 
@@ -194,9 +189,9 @@ int main(int argc, char* argv[])
 
     while (!viewer.wasStopped() || true) {
         if (firstRun && !radarServer.isRun()) {
-            generateRadarQueue(&radarServer);
+            generateRadarQueue(&radarServer, false);
             timedFunction(exposeLaserBuffer, 100);
-            timedFunction(exposeRadarBuffer, 250);
+            timedFunction(std::bind(exposeRadarBuffer, false), 250);
             firstRun = false;
         }
 
@@ -209,6 +204,9 @@ int main(int argc, char* argv[])
                 if (localRadarBuffer.size() != radarBuffer.size()) {
                     localRadarBuffer = radarBuffer;
                 }
+                /* if (firstObject.size() != radarBufferAll.size()) {
+                    firstObject = radarBufferAll;
+                } */
                 mutex.unlock();
                 break;
             }
@@ -220,7 +218,11 @@ int main(int argc, char* argv[])
 
         cv::Mat radarCloudMat = cv::Mat(static_cast<int>(localRadarBuffer.size()),
             1, CV_32FC3, &localRadarBuffer[0]);
-        collection.addCloud(radarCloudMat, cv::viz::Color::orange_red());
+        collection.addCloud(radarCloudMat, cv::viz::Color::red());
+
+        /* cv::Mat firstObjectMat = cv::Mat(static_cast<int>(firstObject.size()),
+            1, CV_32FC3, &firstObject[0]);
+        collection.addCloud(firstObjectMat, cv::viz::Color::orange()); */
 
         collection.finalize();
         viewer.showWidget("Cloud", collection);
