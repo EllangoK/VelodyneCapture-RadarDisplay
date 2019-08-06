@@ -50,10 +50,9 @@ std::vector<float> params = { 1.037013, -50.06731667, 30, -11, -8 };
 
 std::queue<std::vector<cv::Vec3f> > radarBufferQueue;
 std::vector<cv::Vec3f> radarBuffer;
-
 std::queue<std::vector<cv::Vec3f> > radarBufferAllQueue;
 std::vector<cv::Vec3f> radarBufferAll;
-void exposeRadarBuffer(bool all)
+void exposeRadarBuffer()
 {
     while (true) {
         if (mutex.try_lock()) {
@@ -62,9 +61,9 @@ void exposeRadarBuffer(bool all)
             if (!radarBufferQueue.empty()) {
                 radarBuffer = std::move(radarBufferQueue.front());
                 radarBufferQueue.pop();
-                if (all && !radarBufferAllQueue.empty()) {
-                    //radarBufferAll = std::move(radarBufferAllQueue.front());
-                    //radarBufferAllQueue.pop();
+                if (!radarBufferAllQueue.empty()) {
+                    radarBufferAll = std::move(radarBufferAllQueue.front());
+                    radarBufferAllQueue.pop();
                 }
             }
             mutex.unlock();
@@ -77,32 +76,25 @@ void generateRadarQueue(radar::RadarServer* radar, bool all)
 {
     int cycles = 0;
     while (!radar->isEmpty()) {
-        std::vector<cv::Vec3f> temp;
         radar::RadarPacket data;
         *radar >> data;
-        temp.clear();
+        std::vector<cv::Vec3f> temp;
         if (all) {
             radarBufferAllQueue.push(data.generateAllPointVec());
         }
-        if (cycles < 5) {
-            std::cout << "temp1" << std::endl;
-            temp = data.generatePointVec(data.getDistanceVec().size());
-            std::cout << "temp2" << std::endl;
-            radarBufferQueue.push(temp);
+        if (cycles < 8) {
+            radarBufferQueue.push(
+                data.generatePointVec(data.getDistanceVec().size()));
             prev.push_back(data);
         }
         else {
-            std::cout << "temp3" << std::endl;
-            temp = data.findBoundary(prev, 20.0);
-            std::cout << "temp4" << std::endl;
-            radarBufferQueue.push(temp);
+            radarBufferQueue.push(data.findBoundary(prev, 30.));
             prev.push_back(data);
             prev.pop_front();
         }
         cycles++;
     }
 }
-
 std::queue<std::vector<cv::Vec3f> > laserBufferQueue;
 std::vector<cv::Vec3f> laserBuffer;
 void exposeLaserBuffer()
@@ -159,7 +151,7 @@ int main(int argc, char* argv[])
     // velodyne::HDL32ECapture capture( address, port );
     std::system("rm -rf /tmp/radarPacket");
     // Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../" + std::string(argv[1]) + ".pcap";
+    const std::string filename = "../kesselRun.pcap";
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
 
@@ -185,13 +177,15 @@ int main(int argc, char* argv[])
 
     bool firstRun = true;
     int prevCycle = 0;
-    std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer, lidarPointsInRange, firstObject, secondObject;
+    std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer, lidarPointsInRange,
+        firstObject, secondObject;
 
     while (!viewer.wasStopped() || true) {
         if (firstRun && !radarServer.isRun()) {
-            generateRadarQueue(&radarServer, false);
+            generateRadarQueue(&radarServer, true);
+            timedFunction(exposeRadarBuffer, 250);
+            usleep(1300000);
             timedFunction(exposeLaserBuffer, 100);
-            timedFunction(std::bind(exposeRadarBuffer, false), 250);
             firstRun = false;
         }
 
@@ -204,9 +198,9 @@ int main(int argc, char* argv[])
                 if (localRadarBuffer.size() != radarBuffer.size()) {
                     localRadarBuffer = radarBuffer;
                 }
-                /* if (firstObject.size() != radarBufferAll.size()) {
+                if (firstObject.size() != radarBufferAll.size()) {
                     firstObject = radarBufferAll;
-                } */
+                }
                 mutex.unlock();
                 break;
             }
@@ -218,16 +212,16 @@ int main(int argc, char* argv[])
 
         cv::Mat radarCloudMat = cv::Mat(static_cast<int>(localRadarBuffer.size()),
             1, CV_32FC3, &localRadarBuffer[0]);
-        collection.addCloud(radarCloudMat, cv::viz::Color::red());
+        collection.addCloud(radarCloudMat, cv::viz::Color::yellow());
 
-        /* cv::Mat firstObjectMat = cv::Mat(static_cast<int>(firstObject.size()),
-            1, CV_32FC3, &firstObject[0]);
-        collection.addCloud(firstObjectMat, cv::viz::Color::orange()); */
+        cv::Mat firstObjectMat = cv::Mat(static_cast<int>(firstObject.size()), 1,
+            CV_32FC3, &firstObject[0]);
+        collection.addCloud(firstObjectMat, cv::viz::Color::red());
 
         collection.finalize();
         viewer.showWidget("Cloud", collection);
         viewer.spinOnce();
-        usleep(20000);
+        usleep(10000);
     }
 
     // Show Point Cloud Collection

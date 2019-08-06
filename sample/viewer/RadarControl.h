@@ -72,7 +72,7 @@ public:
     int getBoundaryIndex() { return radarBoundaryIndex; }
 
     std::vector<cv::Vec3f> generatePointVec(int boundaryIndex,
-        std::vector<cv::Vec3f>& boundary)
+        std::vector<cv::Vec3f>& bound)
     {
         float x, y, zLower, zUpper;
         float length = lengthVec[boundaryIndex];
@@ -82,12 +82,13 @@ public:
         y = 0.0 + offsetY;
         zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
         zUpper = (length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
-        std::cout << x << "2" << y << " " << zLower << " " << zUpper << std::endl;
-        for (int i = ceil(zLower); i <= floor(zUpper); i += 3) {
-            boundary.push_back(cv::Vec3f(x, y, i));
+        if (std::isinf(zLower) || isnanf(zLower) || isnanf(x) || x > 2000) {
+            x = y = zLower = zUpper = 0;
         }
-        std::cout << "done 1" << std::endl;
-        return boundary;
+        for (int i = ceil(zLower); i <= floor(zUpper); i += 3) {
+            bound.push_back(cv::Vec3f(x, y, i));
+        }
+        return bound;
     }
     std::vector<cv::Vec3f> generatePointVec(int boundaryIndex)
     {
@@ -95,19 +96,18 @@ public:
         float x, y, zLower, zUpper;
         float length = lengthVec[boundaryIndex];
         float distance = distanceVec[boundaryIndex];
-        float scaleZ = calculateScaleZ(distance, true);
+        float scaleZ = calculateScaleZ(distance, false);
         x = (distance + offsetX) * scaleX;
         y = 0.0 + offsetY;
         zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
         zUpper = (length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
-        if (std::isinf(zLower) || isnanf(zLower) || isnanf(x)) {
+        if (std::isinf(zLower) || isnanf(zLower) || isnanf(x) || x > 2000) {
             x = y = zLower = zUpper = 0;
         }
-        std::cout << x << "1" << y << " " << zLower << " " << zUpper << std::endl;
+        std::cout << x << " " << y << " " << zLower << " " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
             bound.push_back(cv::Vec3f(x, y, i));
         }
-        std::cout << "bound Back: " << bound.back()[0] << std::endl;
         return bound;
     }
     std::vector<cv::Vec3f> rescalePointVec(
@@ -137,10 +137,10 @@ public:
     }
     std::vector<cv::Vec3f> generateAllPointVec()
     {
-        std::vector<cv::Vec3f> allBoundaries;
         if (lengthVec.size() < 2) {
             return boundary;
         }
+        std::vector<cv::Vec3f> allBoundaries;
         for (int i = 0; i < lengthVec.size() - 1; i++) {
             generatePointVec(i, allBoundaries);
         }
@@ -163,15 +163,12 @@ public:
         if (lengthVec.size() < 2) {
             return boundary;
         }
-        std::vector<double> matchingIndex;
-        for (int i = 0; i < lengthVec.size(); i++) {
-            matchingIndex.push_back(0);
+        int indices[int(lengthVec.size())] = {};
+        for (int i = 0; i < packets.size(); i++) {
+            indices[findBoundaryIndex(packets[i], percentTolerance)] += 1;
         }
-        for (radar::RadarPacket prev : packets) {
-            matchingIndex[findBoundaryIndex(prev, percentTolerance)] += 1;
-        }
-        std::cout << "lengthVecSize: " << lengthVec.size() << " index: " << std::max_element(matchingIndex.begin(), matchingIndex.end()) - matchingIndex.begin() << std::endl;
-        return generatePointVec(std::max_element(matchingIndex.begin(), matchingIndex.end()) - matchingIndex.begin());
+        const int N = sizeof(indices) / sizeof(int);
+        return generatePointVec(std::distance(indices, std::max_element(indices, indices + N)));
     }
 
     int findBoundaryIndex(radar::RadarPacket prev, double percentTolerance)
@@ -184,14 +181,14 @@ public:
         if (isInPercentTolerance(distanceVec.back(),
                 prevDistanceVec[prevBoundaryIndex], percentTolerance)) {
             radarBoundaryIndex = distanceVec.size() - 1;
-            std::cout << "matched old: " << distanceVec.back() << std::endl;
+            std::cout << "Matched Old: " << distanceVec.back() << " " << prevDistanceVec[prevBoundaryIndex] << std::endl;
             return radarBoundaryIndex;
         }
         for (int i = 0; i < distanceVec.size() - 1; i++) {
             if (isInPercentTolerance(distanceVec[i],
                     prevDistanceVec[prevBoundaryIndex], percentTolerance)) {
                 if (distanceVec.back() <= distanceVec[i]) {
-                    std::cout << "scenario one: ";
+                    std::cout << "Scenario One: ";
                     radarBoundaryIndex = distanceVec.size() - 1;
                 }
                 else {
@@ -203,12 +200,12 @@ public:
         }
         for (int i = 0; i < prevDistanceVec.size() - 1; i++) {
             if (isInPercentTolerance(distanceVec.back(), prevDistanceVec[i], percentTolerance)) {
-                std::cout << "scenario two: " << distanceVec[i] << std::endl;
+                std::cout << "Scenario Two: " << distanceVec[i] << " " << prevDistanceVec[i] << std::endl;
                 radarBoundaryIndex = i;
                 return radarBoundaryIndex;
             }
         }
-        std::cout << "failed" << std::endl;
+        std::cout << "No Matches" << std::endl;
         return radarBoundaryIndex;
     }
 };
