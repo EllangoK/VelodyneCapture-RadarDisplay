@@ -1,5 +1,6 @@
 #include <vector>
 #include <string>
+#include <math.h>
 
 #include <thread>
 #include <mutex>
@@ -20,6 +21,7 @@ class RadarPacket {
   std::vector<float> lengthVec;
   std::vector<float> distanceVec;
   std::vector<cv::Vec3f> boundary;
+  int radarBoundaryIndex;
   float scaleX;
   float offsetX, offsetY, offsetZ, lidarOffsetZ;
 
@@ -29,6 +31,7 @@ class RadarPacket {
     this->timeStartSend = timeStartSend;
     this->timeReceived = timeReceived;
     extractData(socketData);
+    radarBoundaryIndex = distanceVec.size();
   }
   RadarPacket() {
     boundary.push_back(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
@@ -60,17 +63,36 @@ class RadarPacket {
   std::vector<float> getDistanceVec() { return distanceVec; }
   std::vector<float> getLengthVec() { return lengthVec; }
   std::vector<cv::Vec3f> getBoundary() { return boundary; }
+  int getBoundaryIndex() { return radarBoundaryIndex; }
 
   std::vector<cv::Vec3f> generatePointVec(int boundaryIndex,
                                           std::vector<cv::Vec3f>& boundary) {
     float x, y, zLower, zUpper;
     float length = lengthVec[boundaryIndex];
     float distance = distanceVec[boundaryIndex];
-    float scaleZ = calculateScaleZ(distance);
+    float scaleZ = calculateScaleZ(distance, true);
     x = (distance + offsetX) * scaleX;
     y = 0.0 + offsetY;
     zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
     zUpper = (length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
+    for (int i = ceil(zLower); i <= floor(zUpper); i += 3) {
+      boundary.push_back(cv::Vec3f(x, y, i));
+    }
+    return boundary;
+  }
+  std::vector<cv::Vec3f> generatePointVec(int boundaryIndex) {
+    std::vector<cv::Vec3f> boundary;
+    float x, y, zLower, zUpper;
+    float length = lengthVec[boundaryIndex];
+    float distance = distanceVec[boundaryIndex];
+    float scaleZ = calculateScaleZ(distance, true);
+    x = (distance + offsetX) * scaleX;
+    y = 0.0 + offsetY;
+    zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
+    zUpper = (length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
+    if (std::isinf(zLower) || isnanf(zLower)) {
+      zLower = zUpper = 0;
+    }
     for (int i = ceil(zLower); i <= floor(zUpper); i += 3) {
       boundary.push_back(cv::Vec3f(x, y, i));
     }
@@ -121,6 +143,43 @@ class RadarPacket {
 
   float calculateScaleZ(float distance, bool enabled = true) {
     return enabled ? (74.5 * powf(distance, -1.12)) : 1;
+  }
+
+  bool isInPercentTolerance(float measured, float actual,
+                            float percentTolerance) {
+    return (fabs((measured - actual) / actual) * 100. <= percentTolerance);
+  }
+
+  int findBoundaryIndex(radar::RadarPacket prev, double percentTolerance) {
+    std::vector<float> prevDistanceVec = prev.getDistanceVec();
+    int prevBoundaryIndex = prev.getBoundaryIndex();
+    if (isInPercentTolerance(distanceVec.back(),
+                             prevDistanceVec[prevBoundaryIndex], percentTolerance)) {
+      radarBoundaryIndex = distanceVec.size();
+      std::cout << "matched old: " << distanceVec.back() << std::endl;
+      return radarBoundaryIndex;
+    }
+    for (int i = 0; i < distanceVec.size() - 1; i++) {
+      if (isInPercentTolerance(distanceVec[i],
+                               prevDistanceVec[prevBoundaryIndex], percentTolerance)) {
+        if (distanceVec.back() <= distanceVec[i]) {
+          std::cout << "scenario one: ";
+          radarBoundaryIndex = distanceVec.size();
+        } else {
+          radarBoundaryIndex = i;
+        } std::cout << distanceVec[radarBoundaryIndex] << std::endl;
+        return radarBoundaryIndex;
+      }
+    }
+    for (int i = 0; i < prevDistanceVec.size() - 1; i++) {
+      if (isInPercentTolerance(distanceVec.back(), prevDistanceVec[i], percentTolerance)) {
+          std::cout << "scenario two: "  << distanceVec[i] << std::endl;
+        radarBoundaryIndex = i;
+        return radarBoundaryIndex;
+      }
+    }
+    std::cout << "failed" << std::endl;
+    return radarBoundaryIndex;
   }
 };
 

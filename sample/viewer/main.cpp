@@ -59,19 +59,49 @@ void exposeRadarBuffer()
                 radarBuffer = std::move(radarBufferQueue.front());
                 radarCycle++;
                 radarBufferQueue.pop();
-                std::cout << "radarCycle: " << radarCycle << std::endl;
+//                std::cout << "radarCycle: " << radarCycle << std::endl;
             }
             mutex.unlock();
             break;
         }
     }
 }
+radar::RadarPacket prev;
+radar::RadarPacket prevPrev;
 void generateRadarQueue(radar::RadarServer* radar)
 {
+    bool first = true;
+    bool second = false;
+    int cycles = 0;
     while (!radar->isEmpty()) {
+        cycles++;
         radar::RadarPacket data;
         *radar >> data;
-        radarBufferQueue.push(data.generateAllPointVec());
+        std::vector<cv::Vec3f> temp;
+        if (first) {
+            radarBufferQueue.push(data.generatePointVec(data.getDistanceVec().size()));
+            prev = data;
+            first = false;
+            second = true;
+        } else if (second) {
+            radarBufferQueue.push(data.generatePointVec(data.getDistanceVec().size()));
+            prevPrev = prev;
+            prev = data;
+            second = false;
+        } else {
+            int byPrev, byPrevPrev;
+            byPrev = data.findBoundaryIndex(prev, 50);
+            byPrevPrev = data.findBoundaryIndex(prevPrev, 50);
+            if (data.getDistanceVec()[byPrev] == data.getDistanceVec()[byPrevPrev]) {
+                radarBufferQueue.push(data.generatePointVec(byPrev));
+            } else if (data.getDistanceVec()[byPrev] < data.getDistanceVec()[byPrevPrev]) {
+                radarBufferQueue.push(data.generatePointVec(byPrev));
+            } else if (data.getDistanceVec()[byPrev] > data.getDistanceVec()[byPrevPrev]) {
+                radarBufferQueue.push(data.generatePointVec(byPrevPrev));
+            }
+            prevPrev = prev;
+            prev = data;
+        }
     }
 }
 std::atomic_int lidarCycle = { 0 };
@@ -86,7 +116,7 @@ void exposeLaserBuffer()
                 laserBuffer = std::move(laserBufferQueue.front());
                 lidarCycle++;
                 laserBufferQueue.pop();
-                std::cout << "lidarCycle: " << lidarCycle << std::endl;
+//                std::cout << "lidarCycle: " << lidarCycle << std::endl;
             }
             mutex.unlock();
             break;
@@ -137,7 +167,7 @@ int main(int argc, char* argv[])
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
 
-    std::vector<float> params = { 0.964308, -50.06731667, 30, -11, -8 };
+    std::vector<float> params = { 1.037013, -50.06731667, 30, -11, -8 };
     std::string port = "/tmp/radarPacket";
     radar::RadarServer radarServer(port, params);
 
