@@ -158,55 +158,167 @@ public:
         return (fabs((measured - actual) / actual) * 100. <= percentTolerance);
     }
 
-    std::vector<cv::Vec3f> findBoundary(std::deque<radar::RadarPacket> packets, double percentTolerance)
+    std::vector<cv::Vec3f> findBoundary(std::deque<radar::RadarPacket>& packets, double percentTolerance)
     {
         if (lengthVec.size() < 2) {
             return boundary;
         }
-        int indices[int(lengthVec.size())] = {};
+        int indices[int(lengthVec.size()) + 1] = {};
         for (int i = 0; i < packets.size(); i++) {
             indices[findBoundaryIndex(packets[i], percentTolerance)] += 1;
         }
         const int N = sizeof(indices) / sizeof(int);
+        std::vector<float> temp;
+        if (*std::max_element(indices, indices + N) == indices[int(lengthVec.size())]) {
+            indices[int(lengthVec.size())] = 0;
+        }
+        if (*std::max_element(indices, indices + N) < 8)
+            if (projectedRadarBoundary(packets, percentTolerance, temp)) {
+                lengthVec.push_back(temp[0]);
+                distanceVec.push_back(temp[1]);
+                return generatePointVec(distanceVec.size() - 1);
+            }
         return generatePointVec(std::distance(indices, std::max_element(indices, indices + N)));
     }
 
-    int findBoundaryIndex(radar::RadarPacket prev, double percentTolerance)
+    int findBoundaryIndex(radar::RadarPacket& prev, double percentTolerance)
     {
         if (lengthVec.size() < 2) {
             return 0;
         }
         std::vector<float> prevDistanceVec = prev.getDistanceVec();
         int prevBoundaryIndex = prev.getBoundaryIndex();
-        if (isInPercentTolerance(distanceVec.back(),
-                prevDistanceVec[prevBoundaryIndex], percentTolerance)) {
-            radarBoundaryIndex = distanceVec.size() - 1;
-            std::cout << "Matched Old: " << distanceVec.back() << " " << prevDistanceVec[prevBoundaryIndex] << std::endl;
+        if (matchHighOnOldRadarBoundary(prev, percentTolerance)) {
             return radarBoundaryIndex;
         }
-        for (int i = 0; i < distanceVec.size() - 1; i++) {
-            if (isInPercentTolerance(distanceVec[i],
-                    prevDistanceVec[prevBoundaryIndex], percentTolerance)) {
-                if (distanceVec.back() <= distanceVec[i]) {
-                    std::cout << "Scenario One: ";
-                    radarBoundaryIndex = distanceVec.size() - 1;
-                }
-                else {
-                    radarBoundaryIndex = i;
-                }
-                std::cout << distanceVec[radarBoundaryIndex] << std::endl;
-                return radarBoundaryIndex;
-            }
+        if (matchAnyOnOldRadarBoundary(prev, percentTolerance)) {
+            return radarBoundaryIndex;
         }
-        for (int i = 0; i < prevDistanceVec.size() - 1; i++) {
+        /* for (int i = 0; i < prevDistanceVec.size() - 1; i++) {
             if (isInPercentTolerance(distanceVec.back(), prevDistanceVec[i], percentTolerance)) {
                 std::cout << "Scenario Two: " << distanceVec[i] << " " << prevDistanceVec[i] << std::endl;
                 radarBoundaryIndex = i;
                 return radarBoundaryIndex;
             }
-        }
+        } */
         std::cout << "No Matches" << std::endl;
-        return radarBoundaryIndex;
+        return int(lengthVec.size());
+    }
+    bool matchHighOnOldRadarBoundary(radar::RadarPacket& prev, double percentTolerance)
+    {
+        if (isInPercentTolerance(distanceVec.back(),
+                prev.getDistanceVec()[prev.getBoundaryIndex()], percentTolerance)) {
+            std::cout << "Matched Old: " << distanceVec.back() << " " << prev.getDistanceVec()[prev.getBoundaryIndex()] << std::endl;
+            radarBoundaryIndex = distanceVec.size() - 1;
+            return true;
+        }
+        return false;
+    }
+    bool matchAnyOnOldRadarBoundary(radar::RadarPacket& prev, double percentTolerance)
+    {
+        for (int i = 0; i < distanceVec.size() - 1; i++) {
+            if (isInPercentTolerance(distanceVec[i],
+                    prev.getDistanceVec()[prev.getBoundaryIndex()], percentTolerance)) {
+                if (distanceVec.back() <= distanceVec[i]) {
+                    std::cout << "Scenario One: ";
+                    radarBoundaryIndex = distanceVec.size() - 1;
+                    std::cout << "MinHC: " << distanceVec[radarBoundaryIndex] << std::endl;
+                    return true;
+                }
+                else {
+                    radarBoundaryIndex = i;
+                    std::cout << distanceVec[radarBoundaryIndex] << " " << prev.getDistanceVec()[prev.getBoundaryIndex()] << std::endl;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    bool projectedRadarBoundary(std::deque<radar::RadarPacket>& packets, float percentTolerance, std::vector<float>& newData)
+    {
+        if (lengthVec.size() < 2) {
+            return false;
+        }
+        std::vector<float> timeVec, distanceVec, lengthVec, coeffsDistance, coeffsLength;
+        int time = 0;
+        for (int i = 0; i < packets.size(); i++) {
+            timeVec.push_back(time);
+            time += 250; //milliseconds
+            distanceVec.push_back(packets[i].getDistanceVec()[packets[i].getBoundaryIndex()]);
+            lengthVec.push_back(packets[i].getLengthVec()[packets[i].getBoundaryIndex()]);
+        }
+        removeOutliers(timeVec, distanceVec, lengthVec);
+        float projectedDistance = 0, projectedLength = 0;
+        coeffsDistance = leastSquares(timeVec, distanceVec);
+        if (calculateRSquared(timeVec, distanceVec, coeffsDistance) > 0.50) {
+            for (int i = 0; i < coeffsDistance.size(); i++) {
+                projectedDistance += powf(time, i) * coeffsDistance[i];
+            }
+            coeffsLength = leastSquares(timeVec, lengthVec);
+            for (int i = 0; i < coeffsLength.size(); i++) {
+                projectedLength += powf(time, i) * coeffsLength[i];
+            }
+            return true;
+        }
+        return false;
+    }
+
+    void removeOutliers(std::vector<float>& t, std::vector<float>& dis, std::vector<float>& len)
+    {
+        float iqr = quant(dis, 0.75) - quant(dis, 0.25);
+        float lower = quant(dis, 0.25) - iqr;
+        float upper = quant(dis, 0.75) + iqr;
+        int sizeY = dis.size();
+        for (int i = 0; i < sizeY; i++) {
+            if (dis[i] < lower || dis[i] > upper) {
+                dis.erase(dis.begin() + i);
+                t.erase(t.begin() + i);
+                len.erase(len.begin() + i);
+                sizeY--;
+                i--;
+            }
+        }
+    }
+    float calculateRSquared(std::vector<float>& x, std::vector<float>& y, std::vector<float>& coeffs)
+    {
+        float rss = 0, tss = 0, mean = std::accumulate(std::begin(y), std::end(y), 0.0) / y.size();
+        for (int i = 0; i < x.size(); i++) {
+            float val = 0;
+            for (int j = 0; j < coeffs.size(); j++) {
+                val += powf(x[i], j) * coeffs[j];
+            }
+            rss += powf((y[i] - val), 2);
+            tss += powf((y[i] - mean), 2);
+        }
+        float rSquared = 1. - rss / tss;
+        return rSquared;
+    }
+    std::vector<float> leastSquares(std::vector<float>& x, std::vector<float>& y)
+    {
+        float xAvg = accumulate(x.begin(), x.end(), 0.0) / x.size();
+        float yAvg = accumulate(y.begin(), y.end(), 0.0) / y.size();
+        float mTop = 0, mBottom = 0;
+        for (int i = 0; i < x.size(); i++) {
+            mTop += (x[i] - xAvg) * (y[i] - yAvg);
+            mBottom += powf(x[i] - xAvg, 2);
+        }
+        std::vector<float> coeffs = { yAvg - mTop / mBottom * xAvg, mTop / mBottom };
+        return coeffs;
+    }
+
+    template <typename T1, typename T2>
+    typename T1::value_type quant(const T1& x, T2 q)
+    {
+        assert(q >= 0.0 && q <= 1.0);
+
+        const auto n = x.size();
+        const auto id = (n - 1) * q;
+        const auto lo = floor(id);
+        const auto hi = ceil(id);
+        const auto qs = x[lo];
+        const auto h = (id - lo);
+
+        return (1.0 - h) * qs + h * x[hi];
     }
 };
 

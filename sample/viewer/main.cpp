@@ -82,13 +82,13 @@ void generateRadarQueue(radar::RadarServer* radar, bool all)
         if (all) {
             radarBufferAllQueue.push(data.generateAllPointVec());
         }
-        if (cycles < 8) {
+        if (cycles < 12) {
             radarBufferQueue.push(
                 data.generatePointVec(data.getDistanceVec().size()));
             prev.push_back(data);
         }
         else {
-            radarBufferQueue.push(data.findBoundary(prev, 30.));
+            radarBufferQueue.push(data.findBoundary(prev, 40.));
             prev.push_back(data);
             prev.pop_front();
         }
@@ -184,7 +184,7 @@ int main(int argc, char* argv[])
         if (firstRun && !radarServer.isRun()) {
             generateRadarQueue(&radarServer, true);
             timedFunction(exposeRadarBuffer, 250);
-            usleep(1300000);
+            usleep(1900000);
             timedFunction(exposeLaserBuffer, 100);
             firstRun = false;
         }
