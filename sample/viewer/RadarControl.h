@@ -104,6 +104,7 @@ public:
         if (std::isinf(zLower) || isnanf(zLower) || isnanf(x) || x > 2000) {
             x = y = zLower = zUpper = 0;
         }
+        std::cout << "x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
             bound.push_back(cv::Vec3f(x, y, i));
         }
@@ -179,9 +180,27 @@ public:
                 return generatePointVec(distanceVec.size() - 1);
             } */
         std::vector<double> density;
-        std::vector<int> peaks;
-        density = generateDensityVector(packets, .05);
-        findPeaks(density, peaks);
+        std::vector<int> peaks, nonZero;
+        std::vector<float> xVec;
+        for (int i = 0; i < packets.size(); i++) {
+            std::vector<float> temp = packets[i].getDistanceVec();
+            std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
+        }
+        density = generateDensityVector(packets, .005);
+        if(density.size()) {
+            findXPeaks(density, nonZero);
+            if (nonZero.size()) {
+                std::cout << "nonZero: ";
+                for (int i = 0; i < nonZero.size(); i++) {
+                    std::cout << nonZero[i] + (int)(*std::min_element(xVec.begin(),xVec.end())) << " ";
+                }
+                std::cout << std::endl;
+            } else {
+                std::cout << "no nonZero" << std::endl;
+            }
+        } else {
+            std::cout << "no density" << std::endl;
+        }
         return generatePointVec(std::distance(indices, std::max_element(indices, indices + N)));
     }
 
@@ -268,168 +287,10 @@ public:
         }
         return false;
     }
-    void diff(std::vector<float> in, std::vector<float>& out)
-    {
-        out = std::vector<float>(in.size() - 1);
-
-        for (int i = 1; i < in.size(); ++i)
-            out[i - 1] = in[i] - in[i - 1];
-    }
-
-    void vectorProduct(std::vector<float> a, std::vector<float> b, std::vector<float>& out)
-    {
-        out = std::vector<float>(a.size());
-
-        for (int i = 0; i < a.size(); ++i)
-            out[i] = a[i] * b[i];
-    }
-
-    void findIndicesLessThan(std::vector<float> in, float threshold, std::vector<int>& indices)
-    {
-        for (int i = 0; i < in.size(); ++i)
-            if (in[i] < threshold)
-                indices.push_back(i + 1);
-    }
-
-    void selectElements(std::vector<float> in, std::vector<int> indices, std::vector<float>& out)
-    {
-        for (int i = 0; i < indices.size(); ++i)
-            out.push_back(in[indices[i]]);
-    }
-
-    void selectElements(std::vector<int> in, std::vector<int> indices, std::vector<int>& out)
-    {
-        for (int i = 0; i < indices.size(); ++i)
-            out.push_back(in[indices[i]]);
-    }
-
-    void signVector(std::vector<float> in, std::vector<int>& out)
-    {
-        out = std::vector<int>(in.size());
-
-        for (int i = 0; i < in.size(); ++i) {
-            if (in[i] > 0)
-                out[i] = 1;
-            else if (in[i] < 0)
-                out[i] = -1;
-            else
-                out[i] = 0;
-        }
-    }
-    void findPeaks(std::vector<double> xVec, std::vector<int>& peakInds)
-    {
-        std::vector<float> x0(xVec.begin(), xVec.end());
-        int minIdx = distance(x0.begin(), min_element(x0.begin(), x0.end()));
-        int maxIdx = distance(x0.begin(), max_element(x0.begin(), x0.end()));
-
-        float sel = (x0[maxIdx] - x0[minIdx]) / 4.0;
-
-        int len0 = x0.size();
-
-        std::vector<float> dx;
-        diff(x0, dx);
-        std::replace(dx.begin(), dx.end(), 0.0, -1e-9);
-        std::vector<float> dx0(dx.begin(), dx.end() - 1);
-        std::vector<float> dx1(dx.begin() + 1, dx.end());
-        std::vector<float> dx2;
-
-        vectorProduct(dx0, dx1, dx2);
-
-        std::vector<int> ind;
-        findIndicesLessThan(dx2, 0, ind);
-
-        std::vector<float> x;
-
-        std::vector<int> indAux(ind.begin(), ind.end());
-        selectElements(x0, indAux, x);
-        x.insert(x.begin(), x0[0]);
-        x.insert(x.end(), x0[x0.size() - 1]);
-        ;
-
-        ind.insert(ind.begin(), 0);
-        ind.insert(ind.end(), len0);
-
-        int minMagIdx = distance(x.begin(), min_element(x.begin(), x.end()));
-        float minMag = x[minMagIdx];
-        float leftMin = minMag;
-        int len = x.size();
-
-        if (len > 2) {
-            float tempMag = minMag;
-            bool foundPeak = false;
-            int ii;
-
-            std::vector<float> xSub0(x.begin(), x.begin() + 3);
-            std::vector<float> xDiff;
-            diff(xSub0, xDiff);
-
-            std::vector<int> signDx;
-            signVector(xDiff, signDx);
-
-            if (signDx[0] <= 0) {
-                if (signDx[0] == signDx[1]) {
-                    x.erase(x.begin() + 1);
-                    ind.erase(ind.begin() + 1);
-                    len = len - 1;
-                }
-            }
-            else {
-                if (signDx[0] == signDx[1]) {
-                    x.erase(x.begin());
-                    ind.erase(ind.begin());
-                    len = len - 1;
-                }
-            }
-
-            if (x[0] >= x[1])
-                ii = 0;
-            else
-                ii = 1;
-
-            float maxPeaks = ceil((float)len / 2.0);
-            std::vector<int> peakLoc(maxPeaks, 0);
-            std::vector<float> peakMag(maxPeaks, 0.0);
-            int cInd = 1;
-            int tempLoc;
-
-            while (ii < len) {
-                ii = ii + 1;
-                if (foundPeak) {
-                    tempMag = minMag;
-                    foundPeak = false;
-                }
-                if (x[ii - 1] > tempMag && x[ii - 1] > leftMin + sel) {
-                    tempLoc = ii - 1;
-                    tempMag = x[ii - 1];
-                }
-                if (ii == len)
-                    break;
-
-                ii = ii + 1;
-                if (!foundPeak && tempMag > sel + x[ii - 1]) {
-                    foundPeak = true;
-                    leftMin = x[ii - 1];
-                    peakLoc[cInd - 1] = tempLoc;
-                    peakMag[cInd - 1] = tempMag;
-                    cInd = cInd + 1;
-                }
-                else if (x[ii - 1] < leftMin)
-                    leftMin = x[ii - 1];
-            }
-            if (x[x.size() - 1] > tempMag && x[x.size() - 1] > leftMin + sel) {
-                peakLoc[cInd - 1] = len - 1;
-                peakMag[cInd - 1] = x[x.size() - 1];
-                cInd = cInd + 1;
-            }
-            else if (!foundPeak && tempMag > minMag) {
-                peakLoc[cInd - 1] = tempLoc;
-                peakMag[cInd - 1] = tempMag;
-                cInd = cInd + 1;
-            }
-
-            if (cInd > 0) {
-                std::vector<int> peakLocTmp(peakLoc.begin(), peakLoc.begin() + cInd - 1);
-                selectElements(ind, peakLocTmp, peakInds);
+    void findXPeaks(std::vector<double>& density, std::vector<int>& x) {
+        for (int i = 0; i < density.size(); i++) {
+            if (density[i] > 0) {
+                x.push_back(i);
             }
         }
     }
@@ -442,8 +303,9 @@ public:
             std::vector<float> temp = packets[i].getDistanceVec();
             std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
         }
-        for (int i = (int)(*std::min_element(xVec.begin(),xVec.end())); i < (int)(*std::max_element(xVec.begin(),xVec.end())); i += 2) {
-            density.push_back(densityAtPoint(i, xVec, bandwith));
+        xVec.erase(std::remove_if(xVec.begin(), xVec.end(), isnanf), xVec.end());
+        for (int i = (int)(*std::min_element(xVec.begin(),xVec.end())); i < (int)(*std::max_element(xVec.begin(),xVec.end())); i += 1            ) {
+            density.push_back(100.*densityAtPoint(i, xVec, bandwith));
         }
         return density;
     }
@@ -454,11 +316,11 @@ public:
             sum += standardNormalKernel((x - xVec[i]) / bandwith);
         }
         sum /= xVec.size() * bandwith;
-        return fabs(sum) > 1e-12 && !isnanf(sum) ? sum : 0;
+        if (isnanf(sum)) { return 0; }
+        return sum;
     }
     double standardNormalKernel(double x)
     {
-        std::cout << "kerneled: " << exp(-0.5 * pow(x, 2)) / sqrt(2 * CV_PI) << std::endl;
         return exp(-0.5 * pow(x, 2)) / sqrt(2 * CV_PI);
     }
 

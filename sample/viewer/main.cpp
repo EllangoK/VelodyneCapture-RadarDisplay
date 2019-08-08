@@ -82,7 +82,7 @@ void generateRadarQueue(radar::RadarServer* radar, bool all)
         if (all) {
             radarBufferAllQueue.push(data.generateAllPointVec());
         }
-        if (cycles < 12) {
+        if (cycles < 8) {
             radarBufferQueue.push(
                 data.generatePointVec(data.getDistanceVec().size()));
             prev.push_back(data);
