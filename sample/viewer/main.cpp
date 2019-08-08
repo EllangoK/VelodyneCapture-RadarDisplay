@@ -88,7 +88,7 @@ void generateRadarQueue(radar::RadarServer* radar, bool all)
             prev.push_back(data);
         }
         else {
-            radarBufferQueue.push(data.findBoundary(prev, 40.));
+            radarBufferQueue.push(data.findBoundary(prev, 20.));
             prev.push_back(data);
             prev.pop_front();
         }
