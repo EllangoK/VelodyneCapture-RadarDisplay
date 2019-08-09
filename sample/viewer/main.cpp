@@ -50,20 +50,27 @@ std::vector<float> params = { 1.037013, -50.06731667, 30, -11, -8 };
 
 std::queue<std::vector<cv::Vec3f> > radarBufferQueue;
 std::vector<cv::Vec3f> radarBuffer;
-std::queue<std::vector<cv::Vec3f> > radarBufferAllQueue;
-std::vector<cv::Vec3f> radarBufferAll;
+std::queue<std::vector<cv::Vec3f> > firstObjectQueue;
+std::vector<cv::Vec3f> firstObjectBuffer;
+std::queue<std::vector<cv::Vec3f> > secondObjectQueue;
+std::vector<cv::Vec3f> secondObjectBuffer;
 void exposeRadarBuffer()
 {
     while (true) {
         if (mutex.try_lock()) {
             radarBuffer.clear();
-            radarBufferAll.clear();
+            firstObjectBuffer.clear();
+            secondObjectBuffer.clear();
             if (!radarBufferQueue.empty()) {
                 radarBuffer = std::move(radarBufferQueue.front());
                 radarBufferQueue.pop();
-                if (!radarBufferAllQueue.empty()) {
-                    radarBufferAll = std::move(radarBufferAllQueue.front());
-                    radarBufferAllQueue.pop();
+                if (!firstObjectQueue.empty()) {
+                    firstObjectBuffer = std::move(firstObjectQueue.front());
+                    firstObjectQueue.pop();
+                }
+                if (!secondObjectQueue.empty()) {
+                    secondObjectBuffer = std::move(secondObjectQueue.front());
+                    secondObjectQueue.pop();
                 }
             }
             mutex.unlock();
@@ -72,22 +79,21 @@ void exposeRadarBuffer()
     }
 }
 std::deque<radar::RadarPacket> prev;
-void generateRadarQueue(radar::RadarServer* radar, bool all)
+void generateRadarQueue(radar::RadarServer* radar)
 {
     int cycles = 0;
     while (!radar->isEmpty()) {
         radar::RadarPacket data;
         *radar >> data;
         std::vector<cv::Vec3f> temp;
-        if (all) {
-            radarBufferAllQueue.push(data.generateAllPointVec());
-        }
-        if (cycles < 8) {
+        if (cycles < 10) {
             radarBufferQueue.push(
-                data.generatePointVec(data.getDistanceVec().size()));
+                data.generatePointVec(data.getBoundaryIndex()));
             prev.push_back(data);
         }
         else {
+            firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.0005));
+            secondObjectQueue.push(data.generateAllPointVec());
             radarBufferQueue.push(data.findBoundary(prev, 20.));
             prev.push_back(data);
             prev.pop_front();
@@ -182,9 +188,9 @@ int main(int argc, char* argv[])
 
     while (!viewer.wasStopped() || true) {
         if (firstRun && !radarServer.isRun()) {
-            generateRadarQueue(&radarServer, true);
+            generateRadarQueue(&radarServer);
             timedFunction(exposeRadarBuffer, 250);
-            usleep(1900000);
+            usleep(1100000);
             timedFunction(exposeLaserBuffer, 100);
             firstRun = false;
         }
@@ -198,8 +204,11 @@ int main(int argc, char* argv[])
                 if (localRadarBuffer.size() != radarBuffer.size()) {
                     localRadarBuffer = radarBuffer;
                 }
-                if (firstObject.size() != radarBufferAll.size()) {
-                    firstObject = radarBufferAll;
+                if (firstObject.size() != firstObjectBuffer.size()) {
+                    firstObject = firstObjectBuffer;
+                }
+                if (secondObject.size() != secondObjectBuffer.size()) {
+                    secondObject = secondObjectBuffer;
                 }
                 mutex.unlock();
                 break;
@@ -212,11 +221,15 @@ int main(int argc, char* argv[])
 
         cv::Mat radarCloudMat = cv::Mat(static_cast<int>(localRadarBuffer.size()),
             1, CV_32FC3, &localRadarBuffer[0]);
-        collection.addCloud(radarCloudMat, cv::viz::Color::yellow());
+        collection.addCloud(radarCloudMat, cv::viz::Color::green());
 
         cv::Mat firstObjectMat = cv::Mat(static_cast<int>(firstObject.size()), 1,
             CV_32FC3, &firstObject[0]);
         collection.addCloud(firstObjectMat, cv::viz::Color::red());
+
+        cv::Mat secondObjectMat = cv::Mat(static_cast<int>(secondObject.size()), 1,
+            CV_32FC3, &secondObject[0]);
+        collection.addCloud(secondObjectMat, cv::viz::Color::purple());
 
         collection.finalize();
         viewer.showWidget("Cloud", collection);

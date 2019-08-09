@@ -43,6 +43,9 @@ public:
         distanceVec.push_back(std::numeric_limits<float>::quiet_NaN());
         radarBoundaryIndex = distanceVec.size() - 1;
     }
+    struct Boundary {
+        float length, distance;
+    };
     void setCalibrationParams(std::vector<float>& params)
     {
         scaleX = params[0];
@@ -70,6 +73,7 @@ public:
     std::vector<float> getLengthVec() { return lengthVec; }
     std::vector<cv::Vec3f> getBoundary() { return boundary; }
     int getBoundaryIndex() { return radarBoundaryIndex; }
+    int size() {return distanceVec.size();}
 
     std::vector<cv::Vec3f> generatePointVec(int boundaryIndex,
         std::vector<cv::Vec3f>& bound)
@@ -77,7 +81,7 @@ public:
         float x, y, zLower, zUpper;
         float length = lengthVec[boundaryIndex];
         float distance = distanceVec[boundaryIndex];
-        float scaleZ = calculateScaleZ(distance, true);
+        float scaleZ = calculateScaleZ(distance, false);
         x = (distance + offsetX) * scaleX;
         y = 0.0 + offsetY;
         zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
@@ -104,7 +108,7 @@ public:
         if (std::isinf(zLower) || isnanf(zLower) || isnanf(x) || x > 2000) {
             x = y = zLower = zUpper = 0;
         }
-        std::cout << "x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
+        //std::cout << "From Original x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
             bound.push_back(cv::Vec3f(x, y, i));
         }
@@ -122,7 +126,7 @@ public:
         if (std::isinf(zLower) || isnanf(zLower) || isnanf(x) || x > 2000) {
             x = y = zLower = zUpper = 0;
         }
-        std::cout << "From Kernel x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
+        //std::cout << "From Kernel x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
             bound.push_back(cv::Vec3f(x, y, i));
         }
@@ -190,13 +194,6 @@ public:
         if (*std::max_element(indices, indices + N) == indices[int(lengthVec.size())]) {
             indices[int(lengthVec.size())] = 0;
         }
-        /* if (*std::max_element(indices, indices + N) < 6)
-            if (projectedRadarBoundary(packets, percentTolerance, temp)) {
-                lengthVec.push_back(temp[0]);
-                distanceVec.push_back(temp[1]);
-                std::cout << "generatedLine: " << temp[1] << std::endl;
-                return generatePointVec(distanceVec.size() - 1);
-            } */
         return generatePointVec(std::distance(indices, std::max_element(indices, indices + N)));
     }
 
@@ -213,13 +210,13 @@ public:
         if (matchAnyOnOldRadarBoundary(prev, percentTolerance)) {
             return radarBoundaryIndex;
         }
-        /* for (int i = 0; i < prevDistanceVec.size() - 1; i++) {
+        for (int i = 0; i < prevDistanceVec.size() - 1; i++) {
             if (isInPercentTolerance(distanceVec.back(), prevDistanceVec[i], percentTolerance)) {
-                std::cout << "Scenario Two: " << distanceVec[i] << " " << prevDistanceVec[i] << std::endl;
+                //std::cout << "Scenario Two: " << distanceVec[i] << " " << prevDistanceVec[i] << std::endl;
                 radarBoundaryIndex = i;
                 return radarBoundaryIndex;
             }
-        } */
+        }
         //std::cout << "No Matches" << std::endl;
         return int(lengthVec.size());
     }
@@ -253,36 +250,6 @@ public:
         }
         return false;
     }
-    bool projectedRadarBoundary(std::deque<radar::RadarPacket>& packets, float percentTolerance, std::vector<float>& newData)
-    {
-        if (lengthVec.size() < 2) {
-            return false;
-        }
-        std::vector<float> timeVec, distanceVec, lengthVec, coeffsDistance, coeffsLength;
-        int time = 0;
-        for (int i = 0; i < packets.size(); i++) {
-            timeVec.push_back(time);
-            time += 250; //milliseconds
-            distanceVec.push_back(packets[i].getDistanceVec()[packets[i].getBoundaryIndex()]);
-            lengthVec.push_back(packets[i].getLengthVec()[packets[i].getBoundaryIndex()]);
-        }
-        removeOutliers(timeVec, distanceVec, lengthVec);
-        float projectedDistance = 0, projectedLength = 0;
-        coeffsDistance = leastSquares(timeVec, distanceVec);
-        if (calculateRSquared(timeVec, distanceVec, coeffsDistance) != 1) {
-            for (int i = 0; i < coeffsDistance.size(); i++) {
-                projectedDistance += powf(time, i) * coeffsDistance[i];
-            }
-            coeffsLength = leastSquares(timeVec, lengthVec);
-            for (int i = 0; i < coeffsLength.size(); i++) {
-                projectedLength += powf(time, i) * coeffsLength[i];
-            }
-            newData.push_back(projectedLength);
-            newData.push_back(projectedDistance);
-            return true;
-        }
-        return false;
-    }
 
     struct DistanceDensity {
         double distance;
@@ -297,14 +264,15 @@ public:
     std::vector<cv::Vec3f> generateBoundaryFromKernel(std::deque<radar::RadarPacket>& packets, float bandwith)
     {
         std::vector<DistanceDensity> ddX;
-        std::vector<float> peaks;
-        ddX = generateDensityVector(packets, bandwith);
+        std::vector<float> xVec, peaks;
+        xVec = concatenatePrevBoundaries(packets);
+        ddX = generateDensityVector(packets, xVec, bandwith);
         if (ddX.size()) {
             findPeaks(ddX, peaks);
             if (peaks.size()) {
                 float approxLength = 0;
                 for (int i = 0; i < packets.size(); i++) {
-                    for (int j = 0; j < packets[i].getDistanceVec().size(); j++) {
+                    for (int j = 0; j < packets[i].size(); j++) {
                         if (isInPercentTolerance(peaks[0], packets[i].getDistanceVec()[j], 10)) {
                             approxLength = packets[i].getDistanceVec()[j];
                         }
@@ -320,13 +288,11 @@ public:
             }
         }
         else {
+            return generatePointVec((int)(std::min_element(distanceVec.begin(),distanceVec.end()) - distanceVec.begin()));
             std::cout << "no density" << std::endl;
-            return generatePointVec(distanceVec.size() - 1);
         }
     }
-    std::vector<DistanceDensity> generateDensityVector(std::deque<radar::RadarPacket>& packets, float bandwith)
-    {
-        std::vector<DistanceDensity> densityVec;
+    std::vector<float> concatenatePrevBoundaries(std::deque<radar::RadarPacket>& packets) {
         std::vector<float> xVec;
         for (int i = 0; i < packets.size(); i++) {
             std::vector<float> temp = packets[i].getDistanceVec();
@@ -337,8 +303,13 @@ public:
             std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
         }
         xVec.erase(std::remove_if(xVec.begin(), xVec.end(), isnanf), xVec.end());
+        return xVec;
+    }
+    std::vector<DistanceDensity> generateDensityVector(std::deque<radar::RadarPacket>& packets, std::vector<float>& xVec, float bandwith)
+    {
+        std::vector<DistanceDensity> densityVec;
         for (int i = 0; i < (int)(*std::max_element(xVec.begin(), xVec.end())) * 2; i += 1) {
-            float density = densityAtPoint(i / 2., xVec, bandwith);
+            float density = probabilityDensityFunction(i / 2., xVec, bandwith);
             if (int(density) != 0) {
                 densityVec.push_back({ i / 2., density });
             }
@@ -348,12 +319,12 @@ public:
     void findPeaks(std::vector<DistanceDensity>& ddVec, std::vector<float>& peaks)
     {
         std::sort(ddVec.begin(), ddVec.end());
-        int numPeaks = std::min(getDistanceVec().size() + 1, ddVec.size());
+        int numPeaks = std::min(size() + 1, (int)ddVec.size());
         for (int i = ddVec.size() - numPeaks; i < ddVec.size(); i++) {
             peaks.push_back(ddVec[i].distance);
         }
     }
-    double densityAtPoint(double x, std::vector<float>& xVec, double bandwith)
+    double probabilityDensityFunction(double x, std::vector<float>& xVec, double bandwith)
     {
         double sum = 0;
         for (int i = 0; i < xVec.size(); i++) {
@@ -369,63 +340,6 @@ public:
     {
         return exp(-0.5 * pow(x, 2)) / sqrt(2 * CV_PI);
     }
-
-    void removeOutliers(std::vector<float>& t, std::vector<float>& dis, std::vector<float>& len)
-    {
-        float iqr = quant(dis, 0.75) - quant(dis, 0.25);
-        float lower = quant(dis, 0.25) - 1.5 * iqr;
-        float upper = quant(dis, 0.75) + iqr;
-        int sizeY = dis.size();
-        if (lower > upper) {
-            std::swap(lower, upper);
-        }
-        for (int i = 0; i < sizeY; i++) {
-            if (dis[i] < lower || dis[i] > upper) {
-                dis.erase(dis.begin() + i);
-                t.erase(t.begin() + i);
-                len.erase(len.begin() + i);
-                sizeY--;
-                i--;
-            }
-        }
-    }
-    float calculateRSquared(std::vector<float>& x, std::vector<float>& y, std::vector<float>& coeffs)
-    {
-        float rss = 0, tss = 0, mean = std::accumulate(std::begin(y), std::end(y), 0.0) / y.size();
-        for (int i = 0; i < x.size(); i++) {
-            rss += powf((y[i] - coeffs[0] + coeffs[1] * x[i]), 2);
-            tss += powf((y[i] - mean), 2);
-        }
-        float rSquared = 1. - (rss / tss);
-        return rSquared;
-    }
-    std::vector<float> leastSquares(std::vector<float>& x, std::vector<float>& y)
-    {
-        float xAvg = accumulate(x.begin(), x.end(), 0.0) / x.size();
-        float yAvg = accumulate(y.begin(), y.end(), 0.0) / y.size();
-        float mTop = 0, mBottom = 0;
-        for (int i = 0; i < x.size(); i++) {
-            mTop += (x[i] - xAvg) * (y[i] - yAvg);
-            mBottom += powf(x[i] - xAvg, 2);
-        }
-        std::vector<float> coeffs = { yAvg - (mTop / mBottom) * xAvg, mTop / mBottom };
-        return coeffs;
-    }
-
-    template <typename T1, typename T2>
-    typename T1::value_type quant(const T1& x, T2 q)
-    {
-        assert(q >= 0.0 && q <= 1.0);
-
-        const auto n = x.size();
-        const auto id = (n - 1) * q;
-        const auto lo = floor(id);
-        const auto hi = ceil(id);
-        const auto qs = x[lo];
-        const auto h = (id - lo);
-
-        return (1.0 - h) * qs + h * x[hi];
-    }
 };
 
 class RadarServer {
@@ -438,7 +352,6 @@ private:
 
     std::mutex mutex;
     std::thread* socketThread = nullptr;
-    std::thread* closeSocketThread = nullptr;
     std::atomic_bool socketRun = { true };
     std::queue<radar::RadarPacket> queue;
     std::atomic_int queueSize = { 0 };
@@ -456,7 +369,6 @@ public:
     ~RadarServer()
     {
         closeSocket();
-        closeThread(closeSocketThread);
     }
 
     void error(const char* msg)
@@ -504,15 +416,6 @@ public:
             while (true) {
                 auto x = std::chrono::steady_clock::now() + std::chrono::milliseconds(updateTime);
                 funcReadSocket();
-                std::this_thread::sleep_until(x);
-            }
-        });
-        updateTime = 2;
-        auto funcCloseSocket = std::bind(&RadarServer::closeSocket, this);
-        closeSocketThread = new std::thread([funcCloseSocket, updateTime]() {
-            while (true) {
-                auto x = std::chrono::steady_clock::now() + std::chrono::milliseconds(updateTime);
-                funcCloseSocket();
                 std::this_thread::sleep_until(x);
             }
         });
