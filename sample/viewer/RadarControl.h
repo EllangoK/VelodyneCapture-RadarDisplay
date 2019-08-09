@@ -110,6 +110,24 @@ public:
         }
         return bound;
     }
+    std::vector<cv::Vec3f> generatePointVec(float length, float distance)
+    {
+        std::vector<cv::Vec3f> bound;
+        float x, y, zLower, zUpper;
+        float scaleZ = calculateScaleZ(distance, false);
+        x = (distance + offsetX) * scaleX;
+        y = 0.0 + offsetY;
+        zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
+        zUpper = (length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
+        if (std::isinf(zLower) || isnanf(zLower) || isnanf(x) || x > 2000) {
+            x = y = zLower = zUpper = 0;
+        }
+        std::cout << "From Kernel x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
+        for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
+            bound.push_back(cv::Vec3f(x, y, i));
+        }
+        return bound;
+    }
     std::vector<cv::Vec3f> rescalePointVec(
         std::vector<cv::Vec3f>& radarPointCloud, std::vector<float>& params,
         float scaleZ)
@@ -179,28 +197,6 @@ public:
                 std::cout << "generatedLine: " << temp[1] << std::endl;
                 return generatePointVec(distanceVec.size() - 1);
             } */
-        std::vector<double> density;
-        std::vector<int> peaks, nonZero;
-        std::vector<float> xVec;
-        for (int i = 0; i < packets.size(); i++) {
-            std::vector<float> temp = packets[i].getDistanceVec();
-            std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
-        }
-        density = generateDensityVector(packets, .005);
-        if(density.size()) {
-            findXPeaks(density, nonZero);
-            if (nonZero.size()) {
-                std::cout << "nonZero: ";
-                for (int i = 0; i < nonZero.size(); i++) {
-                    std::cout << nonZero[i] + (int)(*std::min_element(xVec.begin(),xVec.end())) << " ";
-                }
-                std::cout << std::endl;
-            } else {
-                std::cout << "no nonZero" << std::endl;
-            }
-        } else {
-            std::cout << "no density" << std::endl;
-        }
         return generatePointVec(std::distance(indices, std::max_element(indices, indices + N)));
     }
 
@@ -287,27 +283,75 @@ public:
         }
         return false;
     }
-    void findXPeaks(std::vector<double>& density, std::vector<int>& x) {
-        for (int i = 0; i < density.size(); i++) {
-            if (density[i] > 0) {
-                x.push_back(i);
+
+    struct DistanceDensity {
+        double distance;
+        double density;
+
+        bool operator<(const DistanceDensity& a) const
+        {
+            return distance < a.distance;
+        }
+    };
+
+    std::vector<cv::Vec3f> generateBoundaryFromKernel(std::deque<radar::RadarPacket>& packets, float bandwith)
+    {
+        std::vector<DistanceDensity> ddX;
+        std::vector<float> peaks;
+        ddX = generateDensityVector(packets, bandwith);
+        if (ddX.size()) {
+            findPeaks(ddX, peaks);
+            if (peaks.size()) {
+                float approxLength = 0;
+                for (int i = 0; i < packets.size(); i++) {
+                    for (int j = 0; j < packets[i].getDistanceVec().size(); j++) {
+                        if (isInPercentTolerance(peaks[0], packets[i].getDistanceVec()[j], 10)) {
+                            approxLength = packets[i].getDistanceVec()[j];
+                        }
+                    }
+                    if (approxLength != 0) {
+                        break;
+                    }
+                }
+                return generatePointVec(approxLength, peaks[0]);
+            }
+            else {
+                std::cout << "no peaks" << std::endl;
             }
         }
+        else {
+            std::cout << "no density" << std::endl;
+            return generatePointVec(distanceVec.size() - 1);
+        }
     }
-
-    std::vector<double> generateDensityVector(std::deque<radar::RadarPacket> packets, float bandwith)
+    std::vector<DistanceDensity> generateDensityVector(std::deque<radar::RadarPacket>& packets, float bandwith)
     {
-        std::vector<double> density;
+        std::vector<DistanceDensity> densityVec;
         std::vector<float> xVec;
         for (int i = 0; i < packets.size(); i++) {
             std::vector<float> temp = packets[i].getDistanceVec();
+            if (i + 1 == packets.size()) {
+                xVec.insert(xVec.end(), temp.begin(), temp.end());
+                xVec.insert(xVec.end(), temp.begin(), temp.end());
+            }
             std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
         }
         xVec.erase(std::remove_if(xVec.begin(), xVec.end(), isnanf), xVec.end());
-        for (int i = (int)(*std::min_element(xVec.begin(),xVec.end())); i < (int)(*std::max_element(xVec.begin(),xVec.end())); i += 1            ) {
-            density.push_back(100.*densityAtPoint(i, xVec, bandwith));
+        for (int i = 0; i < (int)(*std::max_element(xVec.begin(), xVec.end())) * 2; i += 1) {
+            float density = densityAtPoint(i / 2., xVec, bandwith);
+            if (int(density) != 0) {
+                densityVec.push_back({ i / 2., density });
+            }
         }
-        return density;
+        return densityVec;
+    }
+    void findPeaks(std::vector<DistanceDensity>& ddVec, std::vector<float>& peaks)
+    {
+        std::sort(ddVec.begin(), ddVec.end());
+        int numPeaks = std::min(getDistanceVec().size() + 1, ddVec.size());
+        for (int i = ddVec.size() - numPeaks; i < ddVec.size(); i++) {
+            peaks.push_back(ddVec[i].distance);
+        }
     }
     double densityAtPoint(double x, std::vector<float>& xVec, double bandwith)
     {
@@ -316,7 +360,9 @@ public:
             sum += standardNormalKernel((x - xVec[i]) / bandwith);
         }
         sum /= xVec.size() * bandwith;
-        if (isnanf(sum)) { return 0; }
+        if (isnanf(sum)) {
+            return 0;
+        }
         return sum;
     }
     double standardNormalKernel(double x)
