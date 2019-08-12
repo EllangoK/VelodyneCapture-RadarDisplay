@@ -87,15 +87,13 @@ void generateRadarQueue(radar::RadarServer* radar)
         *radar >> data;
         std::vector<cv::Vec3f> temp;
         if (cycles < 10) {
-            radarBufferQueue.push(
-                data.generatePointVec(data.getBoundaryIndex()));
             prev.push_back(data);
         }
         else {
-            firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.0005));
+            prev.push_back(data);
+            firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.02));
             secondObjectQueue.push(data.generateAllPointVec());
             radarBufferQueue.push(data.findBoundary(prev, 20.));
-            prev.push_back(data);
             prev.pop_front();
         }
         cycles++;
@@ -189,9 +187,9 @@ int main(int argc, char* argv[])
     while (!viewer.wasStopped() || true) {
         if (firstRun && !radarServer.isRun()) {
             generateRadarQueue(&radarServer);
-            timedFunction(exposeRadarBuffer, 250);
-            usleep(1100000);
             timedFunction(exposeLaserBuffer, 100);
+            usleep(700000);
+            timedFunction(exposeRadarBuffer, 250);
             firstRun = false;
         }
 
@@ -229,7 +227,7 @@ int main(int argc, char* argv[])
 
         cv::Mat secondObjectMat = cv::Mat(static_cast<int>(secondObject.size()), 1,
             CV_32FC3, &secondObject[0]);
-        collection.addCloud(secondObjectMat, cv::viz::Color::purple());
+        collection.addCloud(secondObjectMat, cv::viz::Color::black());
 
         collection.finalize();
         viewer.showWidget("Cloud", collection);
