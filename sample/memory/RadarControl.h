@@ -15,15 +15,29 @@
 #include <opencv2/opencv.hpp>
 
 namespace radar {
+struct Boundary {
+    float length, distance;
+};
+struct DistanceDensity {
+    double distance;
+    double density;
+
+    bool operator<(const DistanceDensity& a) const
+    {
+        return distance < a.distance;
+    }
+};
 class RadarPacket {
 private:
     long long timeStartSend, timeReceived, timeProcessed; // microseconds
     std::vector<float> lengthVec;
     std::vector<float> distanceVec;
-    std::vector<cv::Vec3f> boundary;
     int radarBoundaryIndex;
+    Boundary boundary;
     float scaleX;
     float offsetX, offsetY, offsetZ, lidarOffsetZ;
+    int cyclesGenerated = 0;
+    int cyclesCheated = 0;
 
 public:
     RadarPacket(long long timeStartSend, long long timeReceived,
@@ -36,16 +50,10 @@ public:
     }
     RadarPacket()
     {
-        boundary.push_back(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
-            std::numeric_limits<float>::quiet_NaN(),
-            std::numeric_limits<float>::quiet_NaN()));
         lengthVec.push_back(std::numeric_limits<float>::quiet_NaN());
         distanceVec.push_back(std::numeric_limits<float>::quiet_NaN());
-        radarBoundaryIndex = distanceVec.size() - 1;
+        radarBoundaryIndex = 0;
     }
-    struct Boundary {
-        float length, distance;
-    };
     void setCalibrationParams(std::vector<float>& params)
     {
         scaleX = params[0];
@@ -71,9 +79,9 @@ public:
 
     std::vector<float> getDistanceVec() { return distanceVec; }
     std::vector<float> getLengthVec() { return lengthVec; }
-    std::vector<cv::Vec3f> getBoundary() { return boundary; }
+    Boundary getBoundary() { return boundary; }
     int getBoundaryIndex() { return radarBoundaryIndex; }
-    int size() {return distanceVec.size();}
+    int size() { return distanceVec.size(); }
 
     std::vector<cv::Vec3f> generatePointVec(int boundaryIndex,
         std::vector<cv::Vec3f>& bound)
@@ -116,6 +124,7 @@ public:
     }
     std::vector<cv::Vec3f> generatePointVec(float length, float distance)
     {
+        boundary = { length, distance };
         std::vector<cv::Vec3f> bound;
         float x, y, zLower, zUpper;
         float scaleZ = calculateScaleZ(distance, false);
@@ -159,11 +168,14 @@ public:
     }
     std::vector<cv::Vec3f> generateAllPointVec()
     {
-        if (lengthVec.size() < 2) {
-            return boundary;
-        }
         std::vector<cv::Vec3f> allBoundaries;
-        for (int i = 0; i < lengthVec.size() - 1; i++) {
+        if (size() < 2) {
+            allBoundaries.push_back(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()));
+            return allBoundaries;
+        }
+        for (int i = 0; i < size() - 1; i++) {
             generatePointVec(i, allBoundaries);
         }
         return allBoundaries;
@@ -182,24 +194,28 @@ public:
 
     std::vector<cv::Vec3f> findBoundary(std::deque<radar::RadarPacket>& packets, double percentTolerance)
     {
-        if (lengthVec.size() < 2) {
-            return boundary;
+        if (size() < 2) {
+            std::vector<cv::Vec3f> NaN;
+            NaN.push_back(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN(),
+                std::numeric_limits<float>::quiet_NaN()));
+            return NaN;
         }
-        int indices[int(lengthVec.size()) + 1] = {};
+        int indices[size() + 1] = {};
         for (int i = 0; i < packets.size(); i++) {
             indices[findBoundaryIndex(packets[i], percentTolerance)] += 1;
         }
         const int N = sizeof(indices) / sizeof(int);
         std::vector<float> temp;
-        if (*std::max_element(indices, indices + N) == indices[int(lengthVec.size())]) {
-            indices[int(lengthVec.size())] = 0;
+        if (*std::max_element(indices, indices + N) == indices[size()]) {
+            indices[size()] = 0;
         }
         return generatePointVec(std::distance(indices, std::max_element(indices, indices + N)));
     }
 
     int findBoundaryIndex(radar::RadarPacket& prev, double percentTolerance)
     {
-        if (lengthVec.size() < 2) {
+        if (size() < 2) {
             return 0;
         }
         std::vector<float> prevDistanceVec = prev.getDistanceVec();
@@ -251,16 +267,6 @@ public:
         return false;
     }
 
-    struct DistanceDensity {
-        double distance;
-        double density;
-
-        bool operator<(const DistanceDensity& a) const
-        {
-            return distance < a.distance;
-        }
-    };
-
     std::vector<cv::Vec3f> generateBoundaryFromKernel(std::deque<radar::RadarPacket>& packets, float bandwith)
     {
         std::vector<DistanceDensity> ddX;
@@ -281,6 +287,8 @@ public:
                         break;
                     }
                 }
+                cyclesGenerated += 1;
+                std::cout << "generated: " << std::endl;
                 return generatePointVec(approxLength, peaks[0]);
             }
             else {
@@ -288,16 +296,22 @@ public:
             }
         }
         else {
-            return generatePointVec((int)(std::min_element(distanceVec.begin(),distanceVec.end()) - distanceVec.begin()));
-            std::cout << "no density" << std::endl;
+            std::cout << "cheated: " << std::endl;
+            int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
+            return generatePointVec(lengthVec[index], distanceVec[index]);
         }
     }
-    std::vector<float> concatenatePrevBoundaries(std::deque<radar::RadarPacket>& packets) {
+    std::vector<float> concatenatePrevBoundaries(std::deque<radar::RadarPacket>& packets)
+    {
         std::vector<float> xVec;
         for (int i = 0; i < packets.size(); i++) {
             std::vector<float> temp = packets[i].getDistanceVec();
-            if (i + 1 == packets.size()) {
-                xVec.insert(xVec.end(), temp.begin(), temp.end());
+            for (int j = 0; j < packets.size() - 1; j++) {
+                if (isInPercentTolerance(temp.back(), packets[j].getBoundary().distance, 5)) {
+                    xVec.push_back(temp.back());
+                }
+            }
+            for (int j = 0; j < i / 2.; j++) {
                 xVec.insert(xVec.end(), temp.begin(), temp.end());
             }
             std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
