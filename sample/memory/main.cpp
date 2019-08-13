@@ -64,7 +64,7 @@ void generateRadarQueue(radar::RadarServer* radar)
             prev.push_back(data);
         }
         else {
-            firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.0005));
+            firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.01));
             secondObjectQueue.push(data.generateAllPointVec());
             radarBufferQueue.push(data.findBoundary(prev, 20.));
             prev.push_back(data);
@@ -129,10 +129,12 @@ int main(int argc, char* argv[])
                 }
                 if (firstObject.size() != firstObjectBuffer.size() && firstObjectBuffer.size()) {
                     firstObject = firstObjectBuffer;
+                    mem_mutex.lock();
                     segment.destroy<radar_shared>("radar_shared");
                     radar_shared *shared = segment.construct<radar_shared>("radar_shared")(alloc_inst);
                     shared->assign(firstObject.begin(), firstObject.end());
                     std::cout << shared[0][0] << std::endl;
+                    mem_mutex.unlock();
                 }
                 if (secondObject.size() != secondObjectBuffer.size()) {
                     secondObject = secondObjectBuffer;
@@ -143,9 +145,5 @@ int main(int argc, char* argv[])
         }
        usleep(10000);
     }
-
-    // Show Point Cloud Collection
-    // Close All Viewers
-    cv::viz::unregisterAllWindows();
     return 0;
 }

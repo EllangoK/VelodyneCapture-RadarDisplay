@@ -155,7 +155,7 @@ int main(int argc, char* argv[])
     // velodyne::HDL32ECapture capture( address, port );
     std::system("rm -rf /tmp/radarPacket");
     // Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../kesselRun.pcap";
+    const std::string filename = "../kesselRunVelocity.pcap";
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
 
@@ -183,12 +183,18 @@ int main(int argc, char* argv[])
     int prevCycle = 0;
     std::vector<cv::Vec3f> localLaserBuffer, localRadarBuffer, lidarPointsInRange,
         firstObject, secondObject;
+    while (true) {
+        if (!radarServer.isRun()) {
+            generateRadarQueue(&radarServer);
+            break;
+        }
+    }
+    //do { std::cout << '\n' << "Wait for second"; } while (std::cin.get() != '\n');
 
     while (!viewer.wasStopped() || true) {
         if (firstRun && !radarServer.isRun()) {
-            generateRadarQueue(&radarServer);
             timedFunction(exposeLaserBuffer, 100);
-            usleep(700000);
+            usleep(250000);
             timedFunction(exposeRadarBuffer, 250);
             firstRun = false;
         }
