@@ -36,6 +36,7 @@ private:
     Boundary boundary;
     float scaleX;
     float offsetX, offsetY, offsetZ, lidarOffsetZ;
+
 public:
     RadarPacket(long long timeStartSend, long long timeReceived,
         std::vector<std::string>& socketData)
@@ -76,7 +77,6 @@ public:
 
     std::vector<float> getDistanceVec() { return distanceVec; }
     std::vector<float> getLengthVec() { return lengthVec; }
-    void setBoundary(float length, float distance) { boundary = {length, distance}; }
     Boundary getBoundary() { return boundary; }
     int getBoundaryIndex() { return radarBoundaryIndex; }
     int size() { return distanceVec.size(); }
@@ -98,7 +98,7 @@ public:
             return bound;
         }
         for (int i = ceil(zLower); i <= floor(zUpper); i += 3) {
-            bound.push_back(cv::Vec3f(x, y, i));
+            bound.push_back(cv::Vec3f(x/100., y/100., i/100.));
         }
         return bound;
     }
@@ -120,15 +120,16 @@ public:
         }
         //std::cout << "From Original x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
-            bound.push_back(cv::Vec3f(x, y, i));
+            bound.push_back(cv::Vec3f(x/100., y/100., i/100.));
         }
         return bound;
     }
     std::vector<cv::Vec3f> generatePointVec(float length, float distance)
     {
+        boundary = { length, distance };
         std::vector<cv::Vec3f> bound;
         float x, y, zLower, zUpper;
-        float scaleZ = calculateScaleZ(distance, true);
+        float scaleZ = calculateScaleZ(distance, false);
         x = (distance + offsetX) * scaleX;
         y = 0.0 + offsetY;
         zLower = (-length / 2. + offsetZ) * scaleZ + lidarOffsetZ;
@@ -140,7 +141,7 @@ public:
         }
         //std::cout << "From Kernel x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
-            bound.push_back(cv::Vec3f(x, y, i));
+            bound.push_back(cv::Vec3f(x/100., y/100., i/100.));
         }
         return bound;
     }
@@ -278,27 +279,19 @@ public:
         ddX = generateDensityVector(packets, xVec, bandwith);
         if (ddX.size()) {
             findPeaks(ddX, peaks);
-            std::cout << "peaks: ";
-            for (int i = 0; i < peaks.size(); i++) {
-        		std::cout << peaks.at(i) << ' ';
-        	}
-            std::cout << std::endl;
             if (peaks.size()) {
                 float approxLength = 0;
-                for (int i = packets.size()-2; i >= 0 ; i--) {
-                    if (isInPercentTolerance(peaks[0], packets[i].getBoundary().distance, 10)) {
-                        approxLength = packets[i].getBoundary().length;
-                        break;
+                for (int i = 0; i < packets.size(); i++) {
+                    for (int j = 0; j < packets[i].size(); j++) {
+                        if (isInPercentTolerance(peaks[0], packets[i].getDistanceVec()[j], 10)) {
+                            approxLength = packets[i].getDistanceVec()[j];
+                        }
                     }
                 }
-                if (approxLength == 0) {
-                    int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
-                    boundary = { lengthVec[index], distanceVec[index] };
-                    std::cout << "no length : " << lengthVec[index] << " " << distanceVec[index] << std::endl;
-                    return generatePointVec(lengthVec[index], distanceVec[index]);
-                }
-                boundary = { approxLength, peaks[0] };
-                return generatePointVec(approxLength, peaks[0]);
+                if (approxLength != 0) {
+                    std::cout << "generated: " << approxLength << " " << peaks[0] << std::endl;
+                    return generatePointVec(approxLength, peaks[0]);
+                } 
             }
             else {
                 std::cout << "no peaks" << std::endl;
@@ -307,17 +300,19 @@ public:
         else {
             std::cout << "cheated: " << std::endl;
             int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
-            boundary = { lengthVec[index], distanceVec[index] };
             return generatePointVec(lengthVec[index], distanceVec[index]);
         }
     }
+    static bool IsOutOfRange (int i) { return i > 1000 || i < 20; }
     std::vector<float> concatenatePrevBoundaries(std::deque<radar::RadarPacket>& packets)
     {
         std::vector<float> xVec;
         for (int i = 0; i < packets.size(); i++) {
             std::vector<float> temp = packets[i].getDistanceVec();
-            if (isInPercentTolerance(temp.back(), packets.back().getBoundary().distance, 10)) {
-                xVec.push_back(temp.back());
+            for (int j = 0; j < packets.size() - 1; j++) {
+                if (isInPercentTolerance(temp.back(), packets[j].getBoundary().distance, 5)) {
+                    xVec.push_back(temp.back());
+                }
             }
             for (int j = 0; j < i / 2.; j++) {
                 xVec.insert(xVec.end(), temp.begin(), temp.end());
@@ -325,6 +320,7 @@ public:
             std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
         }
         xVec.erase(std::remove_if(xVec.begin(), xVec.end(), isnanf), xVec.end());
+        xVec.erase(std::remove_if(xVec.begin(), xVec.end(), radar::RadarPacket::IsOutOfRange), xVec.end());
         return xVec;
     }
     std::vector<DistanceDensity> generateDensityVector(std::deque<radar::RadarPacket>& packets, std::vector<float>& xVec, float bandwith)

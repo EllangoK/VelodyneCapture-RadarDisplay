@@ -126,15 +126,15 @@ int main(int argc, char* argv[])
             if (mutex.try_lock()) {
                 if (localRadarBuffer.size() != radarBuffer.size()) {
                     localRadarBuffer = radarBuffer;
-                }
-                if (firstObject.size() != firstObjectBuffer.size() && firstObjectBuffer.size()) {
-                    firstObject = firstObjectBuffer;
                     mem_mutex.lock();
                     segment.destroy<radar_shared>("radar_shared");
                     radar_shared *shared = segment.construct<radar_shared>("radar_shared")(alloc_inst);
-                    shared->assign(firstObject.begin(), firstObject.end());
+                    shared->assign(localRadarBuffer.begin(), localRadarBuffer.end());
                     std::cout << shared[0][0] << std::endl;
                     mem_mutex.unlock();
+                }
+                if (firstObject.size() != firstObjectBuffer.size() && firstObjectBuffer.size()) {
+                    firstObject = firstObjectBuffer;
                 }
                 if (secondObject.size() != secondObjectBuffer.size()) {
                     secondObject = secondObjectBuffer;
