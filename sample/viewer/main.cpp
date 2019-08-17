@@ -54,6 +54,7 @@ std::queue<std::vector<cv::Vec3f> > firstObjectQueue;
 std::vector<cv::Vec3f> firstObjectBuffer;
 std::queue<std::vector<cv::Vec3f> > secondObjectQueue;
 std::vector<cv::Vec3f> secondObjectBuffer;
+int cycle = 0;
 void exposeRadarBuffer()
 {
     while (true) {
@@ -72,6 +73,7 @@ void exposeRadarBuffer()
                     secondObjectBuffer = std::move(secondObjectQueue.front());
                     secondObjectQueue.pop();
                 }
+                cycle++;
             }
             mutex.unlock();
             break;
@@ -90,10 +92,10 @@ void generateRadarQueue(radar::RadarServer* radar)
             prev.push_back(data);
         }
         else {
-            prev.push_back(data);
             firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.02));
             secondObjectQueue.push(data.generateAllPointVec());
             radarBufferQueue.push(data.findBoundary(prev, 20.));
+            prev.push_back(data);
             prev.pop_front();
         }
         cycles++;
@@ -155,7 +157,7 @@ int main(int argc, char* argv[])
     // velodyne::HDL32ECapture capture( address, port );
     std::system("rm -rf /tmp/radarPacket");
     // Open VelodyneCapture that retrieve from PCAP
-    const std::string filename = "../kesselRunVelocity.pcap";
+    const std::string filename = "../kesselRun.pcap";
     velodyne::VLP16Capture capture(filename);
     // velodyne::HDL32ECapture capture( filename );
 
@@ -194,7 +196,7 @@ int main(int argc, char* argv[])
     while (!viewer.wasStopped() || true) {
         if (firstRun && !radarServer.isRun()) {
             timedFunction(exposeLaserBuffer, 100);
-            usleep(250000);
+            usleep(8000000);
             timedFunction(exposeRadarBuffer, 250);
             firstRun = false;
         }

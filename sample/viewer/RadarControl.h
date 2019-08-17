@@ -24,7 +24,7 @@ struct DistanceDensity {
 
     bool operator<(const DistanceDensity& a) const
     {
-        return distance < a.distance;
+        return density < a.density;
     }
 };
 class RadarPacket {
@@ -33,7 +33,7 @@ private:
     std::vector<float> lengthVec;
     std::vector<float> distanceVec;
     int radarBoundaryIndex;
-    Boundary boundary = {0, 0};
+    Boundary boundary;
     float scaleX;
     float offsetX, offsetY, offsetZ, lidarOffsetZ;
 
@@ -78,6 +78,7 @@ public:
     std::vector<float> getDistanceVec() { return distanceVec; }
     std::vector<float> getLengthVec() { return lengthVec; }
     Boundary getBoundary() { return boundary; }
+    void setBoundary(float length, float distance) { boundary = { length, distance }; }
     int getBoundaryIndex() { return radarBoundaryIndex; }
     int size() { return distanceVec.size(); }
 
@@ -124,9 +125,10 @@ public:
         }
         return bound;
     }
-    std::vector<cv::Vec3f> generatePointVec(float length, float distance, bool enabled = false)
+    std::vector<cv::Vec3f> generatePointVec(float length, float distance)
     {
-        boundary = { length, distance };
+        lengthVec.push_back(length);
+        distanceVec.push_back(distance);
         std::vector<cv::Vec3f> bound;
         float x, y, zLower, zUpper;
         float scaleZ = calculateScaleZ(distance, false);
@@ -141,12 +143,6 @@ public:
         }
         //std::cout << "From Kernel x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
-            if (enabled) {
-                bound.push_back(cv::Vec3f(x, y-2, i));
-                bound.push_back(cv::Vec3f(x, y-1, i));
-                bound.push_back(cv::Vec3f(x, y+1, i));
-                bound.push_back(cv::Vec3f(x, y+2, i));
-            }
             bound.push_back(cv::Vec3f(x, y, i));
         }
         return bound;
@@ -285,61 +281,78 @@ public:
         ddX = generateDensityVector(packets, xVec, bandwith);
         if (ddX.size()) {
             findPeaks(ddX, peaks);
-            std::cout << "peaks: ";
-            for (int i = 0; i < peaks.size(); i++) {
-        		std::cout << peaks.at(i) << ' ';
-        	}
-            std::cout << std::endl;
             if (peaks.size()) {
-                float approxLength = 0;
+                float approxLength = 50;
                 for (int i = 0; i < packets.size(); i++) {
                     for (int j = 0; j < packets[i].size(); j++) {
                         if (isInPercentTolerance(peaks[0], packets[i].getDistanceVec()[j], 10)) {
                             approxLength = packets[i].getDistanceVec()[j];
-                            break;
                         }
                     }
                 }
-                int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
-                if (approxLength == 0) {
-                    std::cout << "cheated3: " << lengthVec[index]  << " " << distanceVec[index]<< std::endl;
-                    return generatePointVec(lengthVec[index], distanceVec[index], true);
-                } else {
-                    if (!isInPercentTolerance(peaks[0], distanceVec[index], 10)) {
-                        std::cout << "cheated4: " << packets[packets.size()-2].getBoundary().length  << " " << packets[packets.size()-2].getBoundary().distance << std::endl;
-                        return generatePointVec(packets[packets.size()-2].getBoundary().length, packets[packets.size()-2].getBoundary().distance, true);
+                if (approxLength != 0) {
+                    bool matchesLast = (isInPercentTolerance(peaks[0], packets.back().getBoundary().distance, 15) && isInPercentTolerance(peaks[0], packets[packets.size() - 1].getBoundary().distance, 15) && isInPercentTolerance(peaks[0], packets[packets.size() - 2].getBoundary().distance, 15));
+                    if (matchesLast || packets.back().getBoundary().distance == 0) {
+                        std::cout << "generated: " << approxLength << " " << peaks[0] << std::endl;
+                        setBoundary(approxLength, peaks[0]);
+                        return generatePointVec(approxLength, peaks[0]);
                     }
-                    return generatePointVec(approxLength, peaks[0], true);
+                    else {
+                        if (isInPercentTolerance(peaks[0], *std::min_element(distanceVec.begin(), distanceVec.end()), 20)) {
+                            int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
+                            std::cout << "wrap peaks[0] to closest if really close: " << peaks[0] << " -> " << distanceVec[index] << std::endl;
+                            setBoundary(lengthVec[index], distanceVec[index]);
+                            return generatePointVec(lengthVec[index], distanceVec[index]);
+                        }
+                        float percentError = fabs((peaks[0] - *std::min_element(distanceVec.begin(), distanceVec.end())) / *std::min_element(distanceVec.begin(), distanceVec.end())) * 100.;
+                        if (percentError < 70. && *std::min_element(distanceVec.begin(), distanceVec.end()) > peaks[0]) {
+                            int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
+                            std::cout << "closest reported boundary is behind and not within peaks[0] error: " << peaks[0] << " -> " << distanceVec[index] << std::endl;
+                            setBoundary(lengthVec[index], distanceVec[index]);
+                            return generatePointVec(lengthVec[index], distanceVec[index]);
+                        }
+                        if (!isInPercentTolerance(peaks[0], *std::min_element(distanceVec.begin(), distanceVec.end()), 20) && *std::min_element(distanceVec.begin(), distanceVec.end()) < peaks[0]) {
+                            int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
+                            std::cout << "closest reported is closer and not within peaks[0] error: " << peaks[0] << " -> " << distanceVec[index] << std::endl;
+                            setBoundary(lengthVec[index], distanceVec[index]);
+                            return generatePointVec(lengthVec[index], distanceVec[index]);
+                        }
+                        std::cout << "generated13: " << approxLength << " " << peaks[0] << std::endl;
+                        setBoundary(approxLength, peaks[0]);
+                        return generatePointVec(approxLength, peaks[0]);
+                    }
+                }
+                else {
+                    std::cout << "generated4: " << packets.back().getBoundary().length << " " << packets.back().getBoundary().distance << std::endl;
+                    setBoundary(approxLength, peaks[0]);
+                    return generatePointVec(packets.back().getBoundary().length, packets.back().getBoundary().distance);
                 }
             }
             else {
-                int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
-                        std::cout << "no peaks: " << lengthVec[index]  << " " << distanceVec[index]<< std::endl;
-                return generatePointVec(lengthVec[index], distanceVec[index], true);
+                std::cout << "no peaks" << std::endl;
             }
         }
         else {
+            std::cout << "cheated: " << std::endl;
             int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
-            std::cout << "cheated: " << lengthVec[index]  << " " << distanceVec[index]<< std::endl;
-            return generatePointVec(lengthVec[index], distanceVec[index], true);
+            setBoundary(lengthVec[index], distanceVec[index]);
+            return generatePointVec(lengthVec[index], distanceVec[index]);
         }
     }
-    static bool IsOutOfRange (int i) { return i > 1000; }
+    static bool IsOutOfRange(int i) { return i > 1000 || i < 20; }
     std::vector<float> concatenatePrevBoundaries(std::deque<radar::RadarPacket>& packets)
     {
         std::vector<float> xVec;
         for (int i = 0; i < packets.size(); i++) {
             std::vector<float> temp = packets[i].getDistanceVec();
-            for (int j = 0; j < packets.size() - 1; j++) {
-                if (isInPercentTolerance(temp.back(), packets[packets.size()-2].getBoundary().distance, 5)) {
-                    xVec.push_back(temp.back());
-                }
-            }
-            for (int j = 0; j < i / 2.; j++) {
+            xVec.push_back(*std::min_element(temp.begin(), temp.end()));
+            for (int j = 0; j < i; j++) {
                 xVec.insert(xVec.end(), temp.begin(), temp.end());
             }
             std::move(temp.begin(), temp.end(), std::back_inserter(xVec));
         }
+        xVec.insert(xVec.end(), distanceVec.begin(), distanceVec.end());
+        xVec.push_back(*std::min_element(distanceVec.begin(), distanceVec.end()));
         xVec.erase(std::remove_if(xVec.begin(), xVec.end(), isnanf), xVec.end());
         xVec.erase(std::remove_if(xVec.begin(), xVec.end(), radar::RadarPacket::IsOutOfRange), xVec.end());
         return xVec;
@@ -347,10 +360,10 @@ public:
     std::vector<DistanceDensity> generateDensityVector(std::deque<radar::RadarPacket>& packets, std::vector<float>& xVec, float bandwith)
     {
         std::vector<DistanceDensity> densityVec;
-        for (int i = 0; i < (int)(*std::max_element(xVec.begin(), xVec.end())) * 2; i += 1) {
-            float density = probabilityDensityFunction(i / 2., xVec, bandwith);
+        for (int i = 0; i < (int)(*std::max_element(xVec.begin(), xVec.end())); i += 1) {
+            float density = probabilityDensityFunction(i, xVec, bandwith);
             if (int(density) != 0) {
-                densityVec.push_back({ i / 2., density });
+                densityVec.push_back({ (double)i, density });
             }
         }
         return densityVec;
@@ -358,16 +371,38 @@ public:
     void findPeaks(std::vector<DistanceDensity>& ddVec, std::vector<float>& peaks)
     {
         std::sort(ddVec.begin(), ddVec.end());
-        int numPeaks = std::min(size() + 1, (int)ddVec.size());
-        for (int i = ddVec.size() - numPeaks; i < ddVec.size(); i++) {
-            peaks.push_back(ddVec[i].distance);
+        int numPeaks = 4; //std::max(size(), 2);
+        for (int i = ddVec.size() - 1; i >= 0; i--) {
+            if (!numPeaks) {
+                break;
+            }
+            if (peaks.size()) {
+                bool flag = false;
+                for (int j = 0; j < peaks.size(); j++) {
+                    if (isInPercentTolerance(peaks[j], ddVec[i].distance, 30)) {
+                        flag = true;
+                    }
+                }
+                if (flag) {
+                    continue;
+                }
+                else {
+                    peaks.push_back(ddVec[i].distance);
+                    numPeaks--;
+                }
+            }
+            else {
+                peaks.push_back(ddVec[i].distance);
+            }
         }
+        std::sort(peaks.begin(), peaks.end());
     }
+
     double probabilityDensityFunction(double x, std::vector<float>& xVec, double bandwith)
     {
         double sum = 0;
         for (int i = 0; i < xVec.size(); i++) {
-            sum += standardNormalKernel((x - xVec[i]) / bandwith);
+            sum += epanechnikovKernel((x - xVec[i]) / bandwith);
         }
         sum /= xVec.size() * bandwith;
         if (isnanf(sum)) {
@@ -378,6 +413,10 @@ public:
     double standardNormalKernel(double x)
     {
         return exp(-0.5 * pow(x, 2)) / sqrt(2 * CV_PI);
+    }
+    double epanechnikovKernel(double x)
+    {
+        return 3. / 4. * (1 - pow(x, 2));
     }
 };
 

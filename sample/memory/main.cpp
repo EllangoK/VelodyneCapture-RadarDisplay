@@ -64,7 +64,7 @@ void generateRadarQueue(radar::RadarServer* radar)
             prev.push_back(data);
         }
         else {
-            firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.01));
+            firstObjectQueue.push(data.generateBoundaryFromKernel(prev, 0.02));
             secondObjectQueue.push(data.generateAllPointVec());
             radarBufferQueue.push(data.findBoundary(prev, 20.));
             prev.push_back(data);
@@ -99,7 +99,7 @@ int main(int argc, char* argv[])
     boost::interprocess::managed_shared_memory segment(boost::interprocess::create_only, "radar_vector", 1048576);
 
     const ShmemAllocator alloc_inst (segment.get_segment_manager());
-
+    boost::interprocess::named_mutex::remove("radar_mutex");
     radar_shared *shared = segment.construct<radar_shared>("radar_shared")(alloc_inst);
     shared->push_back(cv::Vec3f(std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::quiet_NaN()));
     boost::interprocess::named_mutex 
@@ -107,7 +107,7 @@ int main(int argc, char* argv[])
                 boost::interprocess::open_or_create, 
                 "radar_mutex"
             };
-
+    mem_mutex.lock();
     std::system("rm -rf /tmp/radarPacket");
     std::string port = "/tmp/radarPacket";
     radar::RadarServer radarServer(port, params);
@@ -117,26 +117,27 @@ int main(int argc, char* argv[])
         if (firstRun && !radarServer.isRun()) {
             generateRadarQueue(&radarServer);
             timedFunction(exposeRadarBuffer, 250);
-            localRadarBuffer = radarBuffer;
-            shared->assign(localRadarBuffer.begin(), localRadarBuffer.end());
+            firstObject = firstObjectBuffer;
+            shared->assign(firstObject.begin(), firstObject.end());
             firstRun = false;
+            mem_mutex.unlock();
             continue;
         }
         while (true && !firstRun && radarBufferQueue.size()) {
             if (mutex.try_lock()) {
                 if (localRadarBuffer.size() != radarBuffer.size()) {
                     localRadarBuffer = radarBuffer;
+                }
+                if (firstObject != firstObjectBuffer && firstObjectBuffer.size()) {
+                    firstObject = firstObjectBuffer;
                     mem_mutex.lock();
                     segment.destroy<radar_shared>("radar_shared");
                     radar_shared *shared = segment.construct<radar_shared>("radar_shared")(alloc_inst);
-                    shared->assign(localRadarBuffer.begin(), localRadarBuffer.end());
+                    shared->assign(firstObject.begin(), firstObject.end());
                     std::cout << shared[0][0] << std::endl;
                     mem_mutex.unlock();
                 }
-                if (firstObject.size() != firstObjectBuffer.size() && firstObjectBuffer.size()) {
-                    firstObject = firstObjectBuffer;
-                }
-                if (secondObject.size() != secondObjectBuffer.size()) {
+                if (secondObject.size() != secondObjectBuffer.size() && secondObjectBuffer.size()) {
                     secondObject = secondObjectBuffer;
                 }
                 mutex.unlock();
