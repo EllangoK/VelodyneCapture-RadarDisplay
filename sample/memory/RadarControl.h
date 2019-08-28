@@ -121,7 +121,7 @@ public:
         }
         //std::cout << "From Original x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
-            bound.push_back(cv::Vec3f(x, y, i));
+            bound.push_back(cv::Vec3f(x/100., y/100., i/100.));
         }
         return bound;
     }
@@ -143,7 +143,7 @@ public:
         }
         //std::cout << "From Kernel x: " << x << " y: " << y << " zLower: " << zLower << " zUpper: " << zUpper << std::endl;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 5) {
-            bound.push_back(cv::Vec3f(x, y, i));
+            bound.push_back(cv::Vec3f(x/100., y/100., i/100.));
         }
         return bound;
     }
@@ -168,7 +168,7 @@ public:
         zLower = (radarPointCloud.back()[2] - prevLidarOffsetZ / prevScaleZ - prevOffsetZ) + offsetZ * scaleZ + lidarOffsetZ;
         zUpper = (radarPointCloud.front()[2] - prevLidarOffsetZ / prevScaleZ - prevOffsetZ) + offsetZ * scaleZ + lidarOffsetZ;
         for (int i = ceil(zLower); i <= floor(zUpper); i += 2) {
-            radarPointCloud.push_back(cv::Vec3f(x, y, i));
+            radarPointCloud.push_back(cv::Vec3f(x/100., y/100., i/100.));
         }
         return radarPointCloud;
     }

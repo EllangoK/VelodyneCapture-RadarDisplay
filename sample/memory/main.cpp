@@ -116,9 +116,9 @@ int main(int argc, char* argv[])
     while (true) {
         if (firstRun && !radarServer.isRun()) {
             generateRadarQueue(&radarServer);
-            timedFunction(exposeRadarBuffer, 250);
-            firstObject = firstObjectBuffer;
+            firstObject = firstObjectQueue.front();
             shared->assign(firstObject.begin(), firstObject.end());
+            timedFunction(exposeRadarBuffer, 250);
             firstRun = false;
             mem_mutex.unlock();
             continue;

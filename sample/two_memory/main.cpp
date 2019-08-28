@@ -16,8 +16,13 @@
 #include <boost/interprocess/allocators/allocator.hpp>
 #include <boost/interprocess/sync/named_mutex.hpp>
 
-std::vector<float> paramsL = { 1.037013, -50.06731667, 30, -11, -8 };
-std::vector<float> paramsR = { 1.037013, -50.06731667, 30, -11, -8 };
+typedef boost::interprocess::allocator<cv::Vec3f, boost::interprocess::managed_shared_memory::segment_manager>  ShmemAllocator;
+typedef boost::interprocess::vector<cv::Vec3f, ShmemAllocator> radar_shared;
+
+//X scale, lidar height, x, y, z offsets
+std::vector<float> paramsL = { 1.037013, -124.968, -95.25, -22.352, -57.658 };
+std::vector<float> paramsR = { 1.037013, -124.968, 96.52, -21.828, -58.42 };
+
 std::mutex mutex;
 
 std::queue<std::vector<cv::Vec3f> > radarBufferQueueL;
@@ -99,32 +104,6 @@ boost::interprocess::named_mutex
             boost::interprocess::open_or_create, 
             "radar_mutex"
         };
-
-typedef boost::interprocess::allocator<cv::Vec3f, boost::interprocess::managed_shared_memory::segment_manager>  ShmemAllocator;
-
-typedef boost::interprocess::vector<cv::Vec3f, ShmemAllocator> radar_shared;
-
-void updateAndWrite(std::vector<cv::Vec3f>& localRadarBuffer, std::vector<cv::Vec3f>& firstObject, std::vector<cv::Vec3f>& secondObject, std::vector<cv::Vec3f>& radarBuffer, std::vector<cv::Vec3f>& firstObjectBuffer, std::vector<cv::Vec3f>& secondObjectBuffer, std::queue<std::vector<cv::Vec3f> >& radarBufferQueue, boost::interprocess::managed_shared_memory segment, radar_shared*& shared) {
-    const ShmemAllocator alloc_inst (segment.get_segment_manager());
-    if (radarBufferQueue.size() && mutex.try_lock()) {
-        if (localRadarBuffer.size() != radarBuffer.size()) {
-            localRadarBuffer = radarBuffer;
-        }
-        if (firstObject != firstObjectBuffer && firstObjectBuffer.size()) {
-            firstObject = firstObjectBuffer;
-            mem_mutex.lock();
-            segment.destroy<radar_shared>("radar_shared");
-            radar_shared *shared = segment.construct<radar_shared>("radar_shared")(alloc_inst);
-            shared->assign(firstObject.begin(), firstObject.end());
-            std::cout << shared[0][0] << std::endl;
-            mem_mutex.unlock();
-        }
-        if (secondObject.size() != secondObjectBuffer.size() && secondObjectBuffer.size()) {
-            secondObject = secondObjectBuffer;
-        }
-        mutex.unlock();
-    }
-}
 
 int main(int argc, char* argv[])
 {
