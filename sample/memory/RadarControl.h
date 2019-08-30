@@ -304,20 +304,7 @@ public:
                             setBoundary(lengthVec[index], distanceVec[index]);
                             return generatePointVec(lengthVec[index], distanceVec[index]);
                         }
-                        float percentError = fabs((peaks[0] - *std::min_element(distanceVec.begin(), distanceVec.end())) / *std::min_element(distanceVec.begin(), distanceVec.end())) * 100.;
-                        if (percentError < 70. && *std::min_element(distanceVec.begin(), distanceVec.end()) > peaks[0]) {
-                            int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
-                            std::cout << "closest reported boundary is behind and not within peaks[0] error: " << peaks[0] << " -> " << distanceVec[index] << std::endl;
-                            setBoundary(lengthVec[index], distanceVec[index]);
-                            return generatePointVec(lengthVec[index], distanceVec[index]);
-                        }
-                        if (!isInPercentTolerance(peaks[0], *std::min_element(distanceVec.begin(), distanceVec.end()), 20) && *std::min_element(distanceVec.begin(), distanceVec.end()) < peaks[0]) {
-                            int index = (int)(std::min_element(distanceVec.begin(), distanceVec.end()) - distanceVec.begin());
-                            std::cout << "closest reported is closer and not within peaks[0] error: " << peaks[0] << " -> " << distanceVec[index] << std::endl;
-                            setBoundary(lengthVec[index], distanceVec[index]);
-                            return generatePointVec(lengthVec[index], distanceVec[index]);
-                        }
-                        std::cout << "generated13: " << approxLength << " " << peaks[0] << std::endl;
+                        std::cout << "generated1: " << approxLength << " " << peaks[0] << std::endl;
                         setBoundary(approxLength, peaks[0]);
                         return generatePointVec(approxLength, peaks[0]);
                     }
